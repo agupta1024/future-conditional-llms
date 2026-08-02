@@ -5,6 +5,7 @@ import os
 
 import torch
 from torch.utils.data import DataLoader, Dataset
+from torch.utils.data.distributed import DistributedSampler
 from transformers import GPT2Tokenizer
 
 
@@ -116,7 +117,7 @@ class TreasureHuntCollator: # pylint: disable=too-few-public-methods
         }
 
 
-def get_dataloaders(train_path, eval_path, batch_size=16):
+def get_dataloaders(train_path, eval_path, is_ddp=False, batch_size=16):
     """Create train and evaluation dataloaders for treasure-hunt data."""
     tokenizer_ = GPT2Tokenizer.from_pretrained("gpt2")
 
@@ -126,25 +127,47 @@ def get_dataloaders(train_path, eval_path, batch_size=16):
 
     collator = TreasureHuntCollator(pad_token_id=tokenizer_.pad_token_id)
 
-    train_dataloader = None
-    eval_dataloader = None
+    train_dataset = None
+    eval_dataset = None
     if train_path and os.path.exists(train_path):
         train_dataset = TreasureHuntDataset(train_path, tokenizer_)
+    if eval_path and os.path.exists(eval_path):
+        eval_dataset = TreasureHuntDataset(eval_path, tokenizer_)
+
+    if is_ddp:
+        train_sampler = None
+        eval_sampler = None
+        if train_dataset is not None:
+            train_sampler = DistributedSampler(train_dataset)
+        if eval_dataset is not None:
+            eval_sampler = DistributedSampler(eval_dataset, shuffle=False)
+        shuffle = False
+    else:
+        train_sampler = None
+        eval_sampler = None
+        shuffle = True
+    if train_dataset is not None:
         train_dataloader = DataLoader(
             train_dataset,
             batch_size=batch_size,
-            shuffle=True,
+            shuffle=shuffle,
+            sampler=train_sampler,
             collate_fn=collator,
         )
-    if eval_path and os.path.exists(eval_path):
-        eval_dataset = TreasureHuntDataset(eval_path, tokenizer_)
+    else:
+        train_dataloader = None
+    if eval_dataset is not None:
         eval_dataloader = DataLoader(
             eval_dataset,
             batch_size=batch_size,
             shuffle=False,
+            sampler=eval_sampler,
             collate_fn=collator,
         )
-
+    else:
+        eval_dataloader = None
+    if is_ddp:
+        return train_dataloader, eval_dataloader, train_sampler
     return train_dataloader, eval_dataloader
 
 
