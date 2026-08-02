@@ -33,11 +33,11 @@ class LatentPlanner(nn.Module):
     # pylint: disable=too-many-instance-attributes
 
     def __init__(self, model_name_or_path="gpt2", latent_dim=2048,
-                 custom_ar=False, model_config=None):
+                 custom_ar=False, config=None):
         super().__init__()
         print(f"Loading Base GPT-2 from {model_name_or_path}...")
         if custom_ar:
-            self.encoder = GPT2Baseline(config_=model_config)
+            self.encoder = GPT2Baseline(config_=config)
         else:
             self.encoder = GPT2LMHeadModel.from_pretrained(model_name_or_path)
         self.encoder.eval()
@@ -191,13 +191,13 @@ class LatentWriter(nn.Module):
 
     def __init__(self, base_model_path="gpt2", vocab_size=50257,
                  max_seq_len=1024, latent_dim=512,
-                 custom_ar=False, model_config=None, film=False):
+                 custom_ar=False, config=None, film=False):
         super().__init__()
         self.planner = LatentPlanner(
             model_name_or_path=base_model_path,
             latent_dim=latent_dim,
             custom_ar=custom_ar,
-            model_config=model_config,
+            config=config,
         )
         for param in self.planner.parameters():
             param.requires_grad = False
