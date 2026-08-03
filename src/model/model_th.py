@@ -1,4 +1,4 @@
-"""TinyStories model components for latent planning and writing."""
+"""Treasure Hunt model components for latent planning and writing."""
 
 from torch import nn
 
@@ -63,10 +63,9 @@ class LatentPlanner(nn.Module):
         past_ids: tokenized story (batch_size, seq_len)
         future_ids: tokenized story (batch_size, seq_len)
         attention_mask: attention mask (batch_size, seq_len)
-        split_idx: integer defining where the "past" ends and "future" begins
         """
-        sequence_lengths = attention_mask.sum(dim=1) - 1
-        batch_size = input_ids.shape[0]
+        # sequence_lengths = attention_mask.sum(dim=1) - 1
+        # batch_size = input_ids.shape[0]
         with torch.no_grad():
             outputs = self.encoder(
                 input_ids=input_ids,
@@ -84,18 +83,18 @@ class LatentPlanner(nn.Module):
                     attention_mask=future_mask,
                     return_hidden_states=True,
                 )
-                # true_future_latent = self.mean_pooling(true_future_hidden_states, future_mask)
-                true_future_latent = true_future_hidden_states[torch.arange(batch_size),
-                                                               sequence_lengths, :]
+                true_future_latent = self.mean_pooling(true_future_hidden_states, future_mask)
+                # true_future_latent = true_future_hidden_states[torch.arange(batch_size),
+                #                                                sequence_lengths, :]
             else:
                 true_future_hidden_states = None
                 true_future_latent = None
 
-        # pooled_past_latent = self.mean_pooling(hidden_states, attention_mask)
-        last_token_hidden = hidden_states[torch.arange(batch_size), sequence_lengths, :]
+        past_latent = self.mean_pooling(hidden_states, attention_mask)
+        # past_latent = hidden_states[torch.arange(batch_size), sequence_lengths, :]
         # --- Predict the Future ---
         # Only the predictor tracks gradients
-        latent_plan = self.future_predictor(last_token_hidden)
+        latent_plan = self.future_predictor(past_latent)
 
         return latent_plan, true_future_latent, true_future_hidden_states
 
@@ -103,9 +102,8 @@ class LatentPlanner(nn.Module):
 class LatentDecoderBlock(nn.Module): # pylint: disable=too-many-instance-attributes
     """Decoder block that can condition on a latent future plan."""
 
-    def __init__(self, hidden_dim=512, num_heads=4, dropout=0.1, film=False):
+    def __init__(self, hidden_dim=512, num_heads=4, dropout=0.1):
         super().__init__()
-        self.film = film
         # 1. Causal Self-Attention (Looking at the words written so far)
         self.self_attn = nn.MultiheadAttention(
             embed_dim=hidden_dim,
@@ -114,26 +112,13 @@ class LatentDecoderBlock(nn.Module): # pylint: disable=too-many-instance-attribu
             batch_first=True,
         )
         self.ln1 = nn.LayerNorm(hidden_dim)
+        self.film_scale = nn.Linear(hidden_dim, hidden_dim)
+        self.film_shift = nn.Linear(hidden_dim, hidden_dim)
 
-        if film:
-            # 2. FiLM Layers (Feature-wise Linear Modulation)
-            # Injects the latent plan directly into the activation stream
-            self.film_scale = nn.Linear(hidden_dim, hidden_dim)
-            self.film_shift = nn.Linear(hidden_dim, hidden_dim)
-
-            nn.init.zeros_(self.film_scale.weight)
-            nn.init.zeros_(self.film_scale.bias)
-            nn.init.zeros_(self.film_shift.weight)
-            nn.init.zeros_(self.film_shift.bias)
-        else:
-            # 2. Cross-Attention (Looking at the frozen Latent Plan)
-            self.cross_attn = nn.MultiheadAttention(
-                embed_dim=hidden_dim,
-                num_heads=num_heads,
-                dropout=dropout,
-                batch_first=True,
-            )
-            self.ln2 = nn.LayerNorm(hidden_dim)
+        nn.init.zeros_(self.film_scale.weight)
+        nn.init.zeros_(self.film_scale.bias)
+        nn.init.zeros_(self.film_shift.weight)
+        nn.init.zeros_(self.film_shift.bias)
 
         # 3. Feed Forward Network
         self.mlp = nn.Sequential(
@@ -159,28 +144,13 @@ class LatentDecoderBlock(nn.Module): # pylint: disable=too-many-instance-attribu
         )
         x = x + attn_out  # Residual connection
 
-        if self.film:
-            scale = self.film_scale(latent_plan)  # (Batch, 1, Dim)
-            shift = self.film_shift(latent_plan)  # (Batch, 1, Dim)
-            if len(scale.shape) == 2:
-                scale = scale.unsqueeze(1)
-                shift = shift.unsqueeze(1)
-            # Modulate the normalized text features
-            x_modulated = (self.ln3(x) * (1.0 + scale)) + shift
-        else:
-            # --- Step 2: Cross Attention (The "Compass") ---
-            # Query comes from text (x). Keys/Values come from the latent_plan.
-            # No mask needed here because the latent_plan is timeless.
-            latent_plan = latent_plan.unsqueeze(1) if latent_plan.ndim == 2 else latent_plan
-            cross_out, _ = self.cross_attn(
-                query=self.ln2(x),
-                key=latent_plan,
-                value=latent_plan,
-                need_weights=False,
-            )
-            x_modulated = x + cross_out  # Residual connection
-            x_modulated = self.ln3(x_modulated)
-
+        scale = self.film_scale(latent_plan)  # (Batch, 1, Dim)
+        shift = self.film_shift(latent_plan)  # (Batch, 1, Dim)
+        if len(scale.shape) == 2:
+            scale = scale.unsqueeze(1)
+            shift = shift.unsqueeze(1)
+        # Modulate the normalized text features
+        x_modulated = (self.ln3(x) * (1.0 + scale)) + shift
         x = x + self.mlp(x_modulated)
         return x
 
@@ -192,7 +162,7 @@ class LatentWriter(nn.Module):
 
     def __init__(self, base_model_path="gpt2", vocab_size=50257,
                  max_seq_len=1024, latent_dim=512,
-                 custom_ar=False, config=None, film=False):
+                 custom_ar=False, config=None):
         super().__init__()
         self.planner = LatentPlanner(
             model_name_or_path=base_model_path,
@@ -214,7 +184,7 @@ class LatentWriter(nn.Module):
         num_layers = self.planner.encoder.config.n_layer
         num_heads = self.planner.encoder.config.n_head
         self.layers = nn.ModuleList([
-            LatentDecoderBlock(hidden_dim=self.hidden_dim, num_heads=num_heads, film=film)
+            LatentDecoderBlock(hidden_dim=self.hidden_dim, num_heads=num_heads)
             for _ in range(num_layers)
         ])
 

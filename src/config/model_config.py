@@ -12,6 +12,9 @@ from ..model.model_ts import LatentWriter as WriterTS
 from ..model.model_bw import LatentPlanner as PlannerBW
 from ..model.model_bw import LatentWriter as WriterBW
 
+from ..model.model_th import LatentPlanner as PlannerTH
+from ..model.model_th import LatentWriter as WriterTH
+
 _MODEL_DIM_CONFIG = {
     512: {
         "n_embd": 512,
@@ -157,7 +160,13 @@ def _create_planner_model(
 ): # pylint: disable=too-many-arguments,too-many-positional-arguments
     """Create the planner model for the selected dataset family."""
     print(f"Loading base model from {base_model_path}...")
-    planner_cls = PlannerTS if dataset_name in ["tinystories", "treasure_hunt"] else PlannerBW
+    if dataset_name == "tinystories":
+        planner_cls = PlannerTS
+    elif dataset_name == "treasure_hunt":
+        planner_cls = PlannerTH
+    else:
+        planner_cls = PlannerBW
+
     return planner_cls(
         model_name_or_path=base_model_path,
         latent_dim=_MODEL_DIM_CONFIG[hidden_dim]["z_latent"],
@@ -178,7 +187,13 @@ def _create_writer_model(
     tokenizer,
 ): # pylint: disable=too-many-arguments, too-many-positional-arguments
     """Create the writer model for the selected dataset family."""
-    writer_cls = WriterTS if dataset_name in ["tinystories", "treasure_hunt"] else WriterBW
+    if dataset_name == "tinystories":
+        writer_cls = WriterTS
+    elif dataset_name == "treasure_hunt":
+        writer_cls = WriterTH
+    else:
+        writer_cls = WriterBW
+
     writer_kwargs = {
         "base_model_path": base_model_path,
         "vocab_size": len(tokenizer),
