@@ -1,23 +1,30 @@
-"""Prepare Blocksworld datasets for training and evaluation."""
+"""Prepare Blocksworld datasets with goal dropout for training and evaluation."""
 
 import os
 import json
+import random
 
 import torch
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import Dataset, DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from transformers import PreTrainedTokenizerFast
 
-class BlocksworldDataset(Dataset):
-    """Create a dataset that separates prompts from action trajectories."""
-
-    def __init__(self, jsonl_path, tokenizer, max_length=512):
+class DynamicBlocksworldDataset(Dataset):
+    # pylint: disable=too-many-instance-attributes
+    """
+    Create a dataset that separates prompts from action trajectories.
+    """
+    def __init__(self, jsonl_path, tokenizer, max_length=512, goal_dropout_prob=0.3):
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.data = []
+
         self.comma_token_id = self.tokenizer.convert_tokens_to_ids(",")
         self.done_token_id = self.tokenizer.convert_tokens_to_ids("[DONE]")
+        self.goal_token_id = self.tokenizer.convert_tokens_to_ids("[GOAL]")
+        self.pad_token_id = self.tokenizer.pad_token_id
 
+        self.goal_dropout_prob = goal_dropout_prob
         with open(jsonl_path, 'r', encoding='utf-8') as f:
             for line in f:
                 if line.strip():
@@ -26,28 +33,35 @@ class BlocksworldDataset(Dataset):
         print(f"Loaded {len(self.data)} dynamic samples from {jsonl_path}")
 
     def __len__(self):
-        """Return the number of samples in the dataset."""
         return len(self.data)
 
     def __getitem__(self, idx):
-        """Return prompt/trajectory tensors and target labels for one sample."""
+        # pylint: disable=too-many-locals
         sample = self.data[idx]
-
         prompt_text = sample["prompt"] + " "
         prompt_ids = self.tokenizer.encode(prompt_text)
+
+        decoder_prompt_ids = prompt_ids.copy()
+        if random.random() < self.goal_dropout_prob:
+            try:
+                goal_idx = decoder_prompt_ids.index(self.goal_token_id)
+                for i in range(goal_idx + 1, len(decoder_prompt_ids)):
+                    decoder_prompt_ids[i] = self.pad_token_id
+            except ValueError:
+                pass
+
         if "[GOAL]" in prompt_text:
             pure_goal_text = "[GOAL]" + prompt_text.split("[GOAL]")[1]
         else:
             pure_goal_text = prompt_text
         pure_goal_ids = self.tokenizer.encode(pure_goal_text)
-
-        # trajectory_text = "[STEPS] " + sample["trajectory"]
         trajectory_text = sample["trajectory"]
         trajectory_ids = self.tokenizer.encode(trajectory_text) + [self.tokenizer.eos_token_id]
 
-        input_ids = prompt_ids + trajectory_ids
+        input_ids = decoder_prompt_ids + trajectory_ids
         labels = [-100] * len(prompt_ids) + trajectory_ids
         loss_weights = [0.0] * len(prompt_ids) + [1.0] * len(trajectory_ids)
+
         update_mask = [0] * len(input_ids)
 
         for i in range(len(prompt_ids), len(input_ids)):
@@ -71,17 +85,15 @@ class BlocksworldDataset(Dataset):
             "update_mask": torch.tensor(update_mask, dtype=torch.long)
         }
 
-class BlocksworldCollator:
+class DynamicBWCollator:
     # pylint: disable=too-few-public-methods
     """Pad prompt and trajectory tensors for batching."""
-
     def __init__(self, pad_token_id):
         self.pad_token_id = pad_token_id
         self.ignore_index = -100
 
     def __call__(self, features):
         # pylint: disable=too-many-locals
-        """Pad a list of feature dictionaries into a single batch."""
         prompt_lengths = [f["prompt_ids"].size(0) for f in features]
         max_prompt_len = max(prompt_lengths)
 
@@ -148,15 +160,12 @@ class BlocksworldCollator:
         }
 
 def get_dataloaders(train_path, eval_path, tokenizer_path,
-                    is_ddp=False, batch_size=8, max_length=512):
+                            is_ddp=False, batch_size=8, max_length=512):
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     """Return DataLoaders for training and evaluation datasets."""
-    print(f"Loading tokenizer from {tokenizer_path}...")
-    if not os.path.exists(tokenizer_path):
-        print(f"Error: Tokenizer file not found at {tokenizer_path}.\
-              Please ensure the tokenizer exists.")
-
+    print(f"Loading Custom Tokenizer from {tokenizer_path}...")
     tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_path)
+
     tokenizer.add_special_tokens({
         'pad_token': '[PAD]',
         'unk_token': '[UNK]',
@@ -167,11 +176,11 @@ def get_dataloaders(train_path, eval_path, tokenizer_path,
     train_dataset = None
     eval_dataset = None
     if train_path and os.path.exists(train_path):
-        train_dataset = BlocksworldDataset(train_path, tokenizer, max_length=max_length)
+        train_dataset = DynamicBlocksworldDataset(train_path, tokenizer, max_length=max_length)
     if eval_path and os.path.exists(eval_path):
-        eval_dataset = BlocksworldDataset(eval_path, tokenizer, max_length=max_length)
+        eval_dataset = DynamicBlocksworldDataset(eval_path, tokenizer, max_length=max_length)
 
-    collator = BlocksworldCollator(pad_token_id=tokenizer.pad_token_id)
+    collator = DynamicBWCollator(pad_token_id=tokenizer.pad_token_id)
     if is_ddp:
         train_sampler = None
         eval_sampler = None
@@ -226,6 +235,8 @@ if __name__ == "__main__":
         print(f"Prompt IDs (Planner): {batch['prompt_ids'].shape}")
         print(f"Input IDs (Decoder): {batch['input_ids'].shape}")
         print(f"Labels: {batch['labels'].shape}")
+
+
         print("\n=== LABEL MASKING VERIFICATION ===")
         sample_labels = batch["labels"][0].tolist()
 

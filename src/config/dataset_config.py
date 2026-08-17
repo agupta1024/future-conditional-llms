@@ -41,6 +41,29 @@ def get_dataset_config(name="tinystories", max_seq_length=1024, **_kwargs):
             "val_4blocks_path": "./data_cache/blocksworld/blocksworld_eval_4blocks.jsonl",
             "val_6blocks_path": "./data_cache/blocksworld/blocksworld_eval_6blocks.jsonl",
         }
+    elif name == "blocksworld_lexical":
+        dataset_config = {
+            "name": "blocksworld_lexical",
+            "split": "train",
+            "max_seq_length": 512,
+            "batch_size": 32,
+            "dataset_size": 10000,
+            "train_path": "./data_cache/blocksworld_lexical/train.jsonl",
+            "train_big_path": "./data_cache/blocksworld_lexical/train_big.jsonl",
+            "val_path": "./data_cache/blocksworld_lexical/eval.jsonl",
+            "val6_path": "./data_cache/blocksworld_lexical/eval_6.jsonl",
+        }
+    elif name == "blocksworld_sub":
+        dataset_config = {
+            "name": "blocksworld_sub",
+            "split": "train",
+            "max_seq_length": 512,
+            "batch_size": 32,
+            "dataset_size": 10000,
+            "train_path": "./data_cache/blocksworld_sub/train.jsonl",
+            "train_big_path": "./data_cache/blocksworld_sub/train_big.jsonl",
+            "val_path": "./data_cache/blocksworld_sub/eval.jsonl",
+        }
     else:
         path = "./data_cache"
         dataset_config = {

@@ -1,0 +1,117 @@
+{
+  "version": "1.0",
+  "truncation": null,
+  "padding": null,
+  "added_tokens": [
+    {
+      "id": 0,
+      "content": "[UNK]",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1,
+      "content": "[PAD]",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 4,
+      "content": "[STEPS]",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 7,
+      "content": ",",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 21,
+      "content": "[DONE]",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 22,
+      "content": "[GOAL]",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 23,
+      "content": "[INIT]",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    }
+  ],
+  "normalizer": null,
+  "pre_tokenizer": {
+    "type": "Sequence",
+    "pretokenizers": [
+      {
+        "type": "Split",
+        "pattern": {
+          "Regex": ","
+        },
+        "behavior": "Isolated",
+        "invert": false
+      },
+      {
+        "type": "WhitespaceSplit"
+      }
+    ]
+  },
+  "post_processor": null,
+  "decoder": null,
+  "model": {
+    "type": "WordLevel",
+    "vocab": {
+      "[UNK]": 0,
+      "[PAD]": 1,
+      "[STEPS]": 4,
+      ",": 7,
+      "on": 8,
+      "B": 9,
+      "F": 10,
+      "D": 11,
+      "A": 12,
+      "E": 13,
+      "C": 14,
+      "table": 15,
+      "clear": 16,
+      "stack": 17,
+      "unstack": 18,
+      "pickup": 19,
+      "putdown": 20,
+      "[DONE]": 21,
+      "[GOAL]": 22,
+      "[INIT]": 23,
+      "empty": 24,
+      "hand": 25
+    },
+    "unk_token": "[UNK]"
+  }
+}
