@@ -129,6 +129,41 @@ class GPT2Baseline(nn.Module):
             return x
         return self.lm_head(x)
 
+    @torch.no_grad()
+    def generate(self, input_ids, max_new_tokens=50, **_kwargs):
+        # pylint: disable=too-many-locals
+        """Generate tokens autoregressively from the baseline model."""
+        generated_ids = input_ids.clone()
+        context_window = _kwargs.get('context_window', self.config.n_positions)
+        temperature = _kwargs.get('temperature', 0.0)
+        top_k = _kwargs.get('top_k', 50)
+        eos_token_id = _kwargs.get('eos_token_id', self.config.vocab_size - 1)
+        for _ in range(max_new_tokens):
+            context_ids = generated_ids[:, -context_window:]
+            outputs = self(context_ids, use_cache=False)
+
+            if hasattr(outputs, 'logits'):
+                logits = outputs.logits
+            else:
+                logits = outputs
+            next_token_logits = logits[:, -1, :]
+
+            if temperature == 0.0:
+                next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
+            else:
+                next_token_logits = next_token_logits / temperature
+                if top_k > 0:
+                    top_k_values, _ = torch.topk(next_token_logits, top_k)
+                    min_top_k_val = top_k_values[:, -1].unsqueeze(-1)
+                    next_token_logits[next_token_logits < min_top_k_val] = -float('Inf')
+
+                probs = F.softmax(next_token_logits, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)
+            generated_ids = torch.cat((generated_ids, next_token), dim=1)
+            if next_token.item() == eos_token_id:
+                break
+
+        return generated_ids
 
 def load_hf_weights_into_baseline(hf_model, custom_baseline):
     """Transfer HuggingFace weights into the compact baseline implementation."""
