@@ -16,16 +16,22 @@ from ..model.model_th import LatentPlanner as PlannerTH
 from ..model.model_th import LatentWriter as WriterTH
 
 _MODEL_DIM_CONFIG = {
-    512: {
+    "512": {
         "n_embd": 512,
         "n_layer": 4,
         "n_head": 8,
         "z_latent": 2048,
     },
-    768: {
+    "768": {
         "n_embd": 768,
         "n_layer": 12,
         "n_head": 12,
+        "z_latent": 2048,
+    },
+    "512-l": {
+        "n_embd": 512,
+        "n_layer": 20,
+        "n_head": 8,
         "z_latent": 2048,
     },
 }
@@ -38,9 +44,9 @@ def _build_tokenizer():
     return tokenizer
 
 
-def _build_gpt2_config(tokenizer, hidden_dim, max_seq_length):
+def _build_gpt2_config(tokenizer, model_config_key, max_seq_length):
     """Build a GPT-2 config without relying on keyword-only constructor stubs."""
-    dim_config = _MODEL_DIM_CONFIG[hidden_dim]
+    dim_config = _MODEL_DIM_CONFIG[model_config_key]
     gpt2_config = GPT2Config()
     gpt2_config.vocab_size = len(tokenizer)
     gpt2_config.n_positions = max_seq_length
@@ -114,7 +120,7 @@ def load_checkpoint(model, checkpoint_path, optimizer=None, device='cuda'):
 
     cleaned_state_dict = {key.replace("module.", ""): value for key, value in model_state.items()}
     raw_model = model.module if hasattr(model, "module") else model
-    raw_model.load_state_dict(cleaned_state_dict)
+    raw_model.load_state_dict(cleaned_state_dict, strict=False)
     print(f"Model loaded successfully! Resuming at Step: {start_step}")
 
     return model, optimizer, start_step
@@ -156,7 +162,7 @@ def _create_planner_model(
     base_model_path,
     custom_ar,
     device,
-    hidden_dim,
+    model_config_key,
 ): # pylint: disable=too-many-arguments,too-many-positional-arguments
     """Create the planner model for the selected dataset family."""
     print(f"Loading base model from {base_model_path}...")
@@ -169,7 +175,7 @@ def _create_planner_model(
 
     return planner_cls(
         model_name_or_path=base_model_path,
-        latent_dim=_MODEL_DIM_CONFIG[hidden_dim]["z_latent"],
+        latent_dim=_MODEL_DIM_CONFIG[model_config_key]["z_latent"],
         custom_ar=custom_ar,
         config=config,
     ).to(device)
@@ -182,7 +188,7 @@ def _create_writer_model(
     custom_ar,
     film,
     device,
-    hidden_dim,
+    model_config_key,
     max_seq_length,
     tokenizer,
 ): # pylint: disable=too-many-arguments, too-many-positional-arguments
@@ -198,7 +204,7 @@ def _create_writer_model(
         "base_model_path": base_model_path,
         "vocab_size": len(tokenizer),
         "max_seq_len": max_seq_length,
-        "latent_dim": _MODEL_DIM_CONFIG[hidden_dim]["z_latent"],
+        "latent_dim": _MODEL_DIM_CONFIG[model_config_key]["z_latent"],
         "custom_ar": custom_ar,
         "config": config,
     }
@@ -221,13 +227,15 @@ def get_model_and_tokenizer(
     writer_model_path=None,
     planner_model_path=None,
     overwrite_base=False,
+    overwrite_planner=False,
+    train_e2e=False,
 ):
     # pylint: disable=too-many-locals,too-many-arguments,too-many-positional-arguments
     """Return a tokenizer and the requested model variant."""
     tokenizer = _build_tokenizer()
     tokenizer.pad_token = tokenizer.eos_token
-
-    gpt2_config = _build_gpt2_config(tokenizer, hidden_dim, max_seq_length)
+    model_config_key = f"{hidden_dim}-l" if working_model == "gpt2_512-l" else str(hidden_dim)
+    gpt2_config = _build_gpt2_config(tokenizer, model_config_key, max_seq_length)
     print(f"Initializing fresh {dataset_name} {load_stage} for {working_model}...")
 
     base_model_path, planner_path, writer_path = _resolve_model_paths(
@@ -257,7 +265,7 @@ def get_model_and_tokenizer(
             base_model_path,
             custom_ar,
             device,
-            hidden_dim,
+            model_config_key,
         )
         if not load_scratch:
             model, _, _ = load_checkpoint(model, planner_path, device=device)
@@ -269,11 +277,22 @@ def get_model_and_tokenizer(
             custom_ar,
             film,
             device,
-            hidden_dim,
+            model_config_key,
             max_seq_length,
             tokenizer,
         )
-        if not load_scratch:
+        if load_scratch:
+            if not train_e2e:
+                print("Initializing writer model from scratch...")
+                model.planner, _, _ = load_checkpoint(model.planner, planner_path, device=device)
+                if overwrite_base:
+                    print(f"Overwriting base model weights from {base_model_path}...")
+                    model.planner.encoder, _, _ = load_checkpoint(
+                        model.planner.encoder,
+                        base_model_path,
+                        device=device,
+                    )
+        else:
             model, _, _ = load_checkpoint(model, writer_path, device=device)
             if overwrite_base:
                 print(f"Overwriting base model weights from {base_model_path}...")
@@ -282,14 +301,11 @@ def get_model_and_tokenizer(
                     base_model_path,
                     device=device,
                 )
-        else:
-            print("Initializing writer model from scratch...")
-            model.planner, _, _ = load_checkpoint(model.planner, planner_path, device=device)
-            if overwrite_base:
-                print(f"Overwriting base model weights from {base_model_path}...")
-                model.planner.encoder, _, _ = load_checkpoint(
-                    model.planner.encoder,
-                    base_model_path,
+            if overwrite_planner:
+                print(f"Overwriting planner model weights from {planner_path}...")
+                model.planner, _, _ = load_checkpoint(
+                    model.planner,
+                    planner_path,
                     device=device,
                 )
 
