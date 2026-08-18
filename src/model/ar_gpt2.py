@@ -134,10 +134,16 @@ class GPT2Baseline(nn.Module):
         # pylint: disable=too-many-locals
         """Generate tokens autoregressively from the baseline model."""
         generated_ids = input_ids.clone()
+        batch_size, _ = input_ids.shape
+        unfinished_sequences = torch.ones(batch_size, dtype=torch.bool,
+                                                  device=input_ids.device)
         context_window = _kwargs.get('context_window', self.config.n_positions)
         temperature = _kwargs.get('temperature', 0.0)
         top_k = _kwargs.get('top_k', 50)
         eos_token_id = _kwargs.get('eos_token_id', self.config.vocab_size - 1)
+        pad_token_id = _kwargs.get('pad_token_id', None)
+        fill_pad_id = (pad_token_id if pad_token_id is not None
+                        else (eos_token_id if eos_token_id is not None else 0))
         for _ in range(max_new_tokens):
             context_ids = generated_ids[:, -context_window:]
             outputs = self(context_ids, use_cache=False)
@@ -159,8 +165,19 @@ class GPT2Baseline(nn.Module):
 
                 probs = F.softmax(next_token_logits, dim=-1)
                 next_token = torch.multinomial(probs, num_samples=1)
+            if eos_token_id is not None:
+                next_token_flat = next_token.squeeze(-1)
+                is_eos = next_token_flat == eos_token_id
+                next_token_flat = torch.where(
+                    unfinished_sequences,
+                    next_token_flat,
+                    fill_pad_id
+                )
+                unfinished_sequences = unfinished_sequences & (~is_eos)
+                next_token = next_token_flat.unsqueeze(-1)
+
             generated_ids = torch.cat((generated_ids, next_token), dim=1)
-            if next_token.item() == eos_token_id:
+            if eos_token_id is not None and not unfinished_sequences.any():
                 break
 
         return generated_ids
@@ -204,16 +221,15 @@ if __name__ == "__main__":
     base_working_model = "hf_gpt2_512_512"
     stage = "base"
     model_map = {
-        "gpt2_hf": [2048, 768],
-        "gpt2_hf_1024": [1024, 768],
-        "gpt2_512_1024": [1024, 512],
-        "gpt2_512_512": [512, 512],
-        "hf_gpt2_512_512": [512, 512],
+        "gpt2_hf": [2048],
+        "gpt2_hf_1024": [1024],
+        "gpt2_512_1024": [1024],
+        "gpt2_512_512": [512],
+        "hf_gpt2_512_512": [512],
     }
 
     _, hf_model_ = get_model_and_tokenizer(
         working_model=base_working_model,
-        hidden_dim=model_map[base_working_model][1],
         max_seq_length=model_map[base_working_model][0],
         load_scratch=False,
         dataset_name="tinystories",
@@ -224,7 +240,6 @@ if __name__ == "__main__":
     stage = "base"
     _, model = get_model_and_tokenizer(
         working_model=base_working_model,
-        hidden_dim=model_map[base_working_model][1],
         max_seq_length=model_map[base_working_model][0],
         load_scratch=False,
         dataset_name="tinystories",
