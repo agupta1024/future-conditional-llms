@@ -6,7 +6,7 @@ from tokenizers import Tokenizer, models, pre_tokenizers, trainers, Regex
 
 def train_blocksworld_tokenizer(data_path="./data_cache/blocksworld_lexical/train.jsonl"):
     """Train a custom tokenizer for the Blocksworld dataset."""
-    save_path="./src/config/tokenizer/bw6_tokenizer.json"
+    save_path="./src/config/tokenizer"
     os.makedirs(save_path, exist_ok=True)
     print("Training custom Blocksworld tokenizer...")
 
@@ -32,9 +32,10 @@ def train_blocksworld_tokenizer(data_path="./data_cache/blocksworld_lexical/trai
                     yield sample["trajectory"]
 
     tokenizer.train_from_iterator(get_training_corpus(), trainer=trainer)
-    tokenizer.save(save_path)
+    file_path = os.path.join(save_path, "bw6_tokenizer.json")
+    tokenizer.save(file_path)
 
-    print(f"Tokenizer trained and saved to {save_path}")
+    print(f"Tokenizer trained and saved to {file_path}")
     print(f"Final Vocabulary Size: {tokenizer.get_vocab_size()}")
 
     vocab = tokenizer.get_vocab()

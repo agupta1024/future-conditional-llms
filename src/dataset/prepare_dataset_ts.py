@@ -196,8 +196,8 @@ def get_dataloaders(
         collate_fn=collator,
     )
     if is_ddp:
-        return train_dataloader, eval_dataloader, train_sampler
-    return train_dataloader, eval_dataloader
+        return train_dataloader, eval_dataloader, tokenizer_model, train_sampler
+    return train_dataloader, eval_dataloader, tokenizer_model, train_sampler
 
 
 if __name__ == "__main__":

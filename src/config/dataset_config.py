@@ -15,6 +15,8 @@ def get_dataset_config(name="tinystories", max_seq_length=1024, **_kwargs):
             "dataset_size": 100000,
             "train_path": "./data_cache/",
             "val_path": "./data_cache/",
+            "tokenizer_path": None,
+            "vocab_size": 50257,
         }
     elif name == "treasure_hunt":
         dataset_config = {
@@ -28,41 +30,49 @@ def get_dataset_config(name="tinystories", max_seq_length=1024, **_kwargs):
             "val_128_path": "./data_cache/treasure_hunt/eval_horizon_128.jsonl",
             "val_256_path": "./data_cache/treasure_hunt/eval_horizon_256.jsonl",
             "val_512_path": "./data_cache/treasure_hunt/eval_horizon_512.jsonl",
+            "tokenizer_path": None,
+            "vocab_size": 50257,
         }
     elif name == "blocksworld":
         dataset_config = {
             "name": "blocksworld",
             "split": "train",
             "max_seq_length": 512,
-            "batch_size": 32,
+            "batch_size": 16,
             "dataset_size": 10000,
             "train_path": "./data_cache/blocksworld/blocksworld_train.jsonl",
             "val_path": "./data_cache/blocksworld/blocksworld_eval.jsonl",
             "val_4blocks_path": "./data_cache/blocksworld/blocksworld_eval_4blocks.jsonl",
             "val_6blocks_path": "./data_cache/blocksworld/blocksworld_eval_6blocks.jsonl",
+            "tokenizer_path": "./src/config/tokenizer/bw6_tokenizer.json",
+            "vocab_size": 100,
         }
     elif name == "blocksworld_lexical":
         dataset_config = {
             "name": "blocksworld_lexical",
             "split": "train",
             "max_seq_length": 512,
-            "batch_size": 32,
+            "batch_size": 16,
             "dataset_size": 10000,
             "train_path": "./data_cache/blocksworld_lexical/train.jsonl",
             "train_big_path": "./data_cache/blocksworld_lexical/train_big.jsonl",
             "val_path": "./data_cache/blocksworld_lexical/eval.jsonl",
             "val6_path": "./data_cache/blocksworld_lexical/eval_6.jsonl",
+            "tokenizer_path": "./src/config/tokenizer/bw6_tokenizer.json",
+            "vocab_size": 100,
         }
     elif name == "blocksworld_sub":
         dataset_config = {
             "name": "blocksworld_sub",
             "split": "train",
             "max_seq_length": 512,
-            "batch_size": 32,
+            "batch_size": 16,
             "dataset_size": 10000,
             "train_path": "./data_cache/blocksworld_sub/train.jsonl",
             "train_big_path": "./data_cache/blocksworld_sub/train_big.jsonl",
             "val_path": "./data_cache/blocksworld_sub/eval.jsonl",
+            "tokenizer_path": "./src/config/tokenizer/bw6_tokenizer.json",
+            "vocab_size": 100,
         }
     else:
         path = "./data_cache"

@@ -117,7 +117,7 @@ class TreasureHuntCollator: # pylint: disable=too-few-public-methods
         }
 
 
-def get_dataloaders(train_path, eval_path, is_ddp=False, batch_size=16):
+def get_dataloaders(train_path, eval_path, is_ddp=False, batch_size=16, **_kwargs):
     """Create train and evaluation dataloaders for treasure-hunt data."""
     tokenizer_ = GPT2Tokenizer.from_pretrained("gpt2")
 
@@ -167,8 +167,8 @@ def get_dataloaders(train_path, eval_path, is_ddp=False, batch_size=16):
     else:
         eval_dataloader = None
     if is_ddp:
-        return train_dataloader, eval_dataloader, train_sampler
-    return train_dataloader, eval_dataloader
+        return train_dataloader, eval_dataloader, tokenizer_, train_sampler
+    return train_dataloader, eval_dataloader, tokenizer_, train_sampler
 
 
 if __name__ == "__main__":
@@ -176,7 +176,7 @@ if __name__ == "__main__":
 
     tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
     try:
-        train_loader, eval_loader = get_dataloaders(
+        train_loader, eval_loader,_,_ = get_dataloaders(
             train_path="./data_cache/treasure_hunt/train.jsonl",
             eval_path="./data_cache/treasure_hunt/eval_horizon_64.jsonl",
             batch_size=2,

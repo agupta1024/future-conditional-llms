@@ -4,6 +4,7 @@ import os
 
 import torch
 from transformers import AutoTokenizer, GPT2Config, GPT2LMHeadModel
+from transformers import PreTrainedTokenizerFast
 
 from ..model.ar_gpt2 import GPT2Baseline
 from ..model.model_ts import LatentPlanner as PlannerTS
@@ -34,21 +35,36 @@ _MODEL_DIM_CONFIG = {
         "n_head": 8,
         "z_latent": 2048,
     },
+    "1024-l": {
+        "n_embd": 512,
+        "n_layer": 20,
+        "n_head": 8,
+        "z_latent": 2048,
+    }
 }
 
 
-def _build_tokenizer():
+def _build_tokenizer(tokenizer_path=None):
     """Create the shared GPT-2 tokenizer used across model variants."""
-    tokenizer = AutoTokenizer.from_pretrained("gpt2", padding_side="left")
+    if tokenizer_path:
+        tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_path)
+        tokenizer.add_special_tokens({
+            'pad_token': '[PAD]',
+            'unk_token': '[UNK]',
+            'eos_token': '[PAD]',
+            'additional_special_tokens': ['[INIT]', '[GOAL]', ',']
+        })
+    else:
+        tokenizer = AutoTokenizer.from_pretrained("gpt2", padding_side="left")
     tokenizer.pad_token = tokenizer.eos_token
     return tokenizer
 
 
-def _build_gpt2_config(tokenizer, model_config_key, max_seq_length):
+def _build_gpt2_config(tokenizer, model_config_key, max_seq_length, vocab_size=None):
     """Build a GPT-2 config without relying on keyword-only constructor stubs."""
     dim_config = _MODEL_DIM_CONFIG[model_config_key]
     gpt2_config = GPT2Config()
-    gpt2_config.vocab_size = len(tokenizer)
+    gpt2_config.vocab_size = vocab_size if vocab_size else len(tokenizer)
     gpt2_config.n_positions = max_seq_length
     gpt2_config.n_embd = dim_config["n_embd"]
     gpt2_config.n_layer = dim_config["n_layer"]
@@ -190,7 +206,6 @@ def _create_writer_model(
     device,
     model_config_key,
     max_seq_length,
-    tokenizer,
 ): # pylint: disable=too-many-arguments, too-many-positional-arguments
     """Create the writer model for the selected dataset family."""
     if dataset_name == "tinystories":
@@ -202,7 +217,7 @@ def _create_writer_model(
 
     writer_kwargs = {
         "base_model_path": base_model_path,
-        "vocab_size": len(tokenizer),
+        "vocab_size": config.vocab_size,
         "max_seq_len": max_seq_length,
         "latent_dim": _MODEL_DIM_CONFIG[model_config_key]["z_latent"],
         "custom_ar": custom_ar,
@@ -215,7 +230,6 @@ def _create_writer_model(
 
 def get_model_and_tokenizer(
     working_model="gpt2",
-    hidden_dim=512,
     max_seq_length=1024,
     load_scratch=False,
     dataset_name="tinystories",
@@ -229,13 +243,15 @@ def get_model_and_tokenizer(
     overwrite_base=False,
     overwrite_planner=False,
     train_e2e=False,
+    vocab_size=None,
+    tokenizer_path=None,
 ):
     # pylint: disable=too-many-locals,too-many-arguments,too-many-positional-arguments
     """Return a tokenizer and the requested model variant."""
-    tokenizer = _build_tokenizer()
-    tokenizer.pad_token = tokenizer.eos_token
-    model_config_key = f"{hidden_dim}-l" if working_model == "gpt2_512-l" else str(hidden_dim)
-    gpt2_config = _build_gpt2_config(tokenizer, model_config_key, max_seq_length)
+    tokenizer = _build_tokenizer(tokenizer_path=tokenizer_path)
+    model_config_key = working_model.split('_')[1]
+    gpt2_config = _build_gpt2_config(tokenizer, model_config_key, max_seq_length,
+                                         vocab_size)
     print(f"Initializing fresh {dataset_name} {load_stage} for {working_model}...")
 
     base_model_path, planner_path, writer_path = _resolve_model_paths(
@@ -278,8 +294,7 @@ def get_model_and_tokenizer(
             film,
             device,
             model_config_key,
-            max_seq_length,
-            tokenizer,
+            max_seq_length
         )
         if load_scratch:
             if not train_e2e:
