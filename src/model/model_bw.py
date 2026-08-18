@@ -174,7 +174,7 @@ class LatentWriter(nn.Module):
     The unified End-to-End Continuous Global Conditioning Model.
     Ties the components together for simultaneous training and inference.
     """
-    def __init__(self, config, latent_dim=512):
+    def __init__(self, config, latent_dim=512, **_kwargs):
         super().__init__()
         self.config = config
         self.planner = LatentPlanner(config, latent_dim=latent_dim)
