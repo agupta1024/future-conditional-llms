@@ -23,11 +23,11 @@ _MODEL_DIM_CONFIG = {
         "n_head": 8,
         "z_latent": 2048,
     },
-    "768": {
-        "n_embd": 768,
-        "n_layer": 12,
-        "n_head": 12,
-        "z_latent": 2048,
+    "1024": {
+        "n_embd": 512,
+        "n_layer": 4,
+        "n_head": 8,
+        "z_latent": 512,
     },
     "512-l": {
         "n_embd": 512,
@@ -39,7 +39,7 @@ _MODEL_DIM_CONFIG = {
         "n_embd": 512,
         "n_layer": 20,
         "n_head": 8,
-        "z_latent": 2048,
+        "z_latent": 512,
     }
 }
 
@@ -225,6 +225,8 @@ def _create_writer_model(
     }
     if writer_cls is WriterTS:
         writer_kwargs["film"] = film
+    if writer_cls is WriterBW:
+        writer_kwargs["latent_dim"] = 512
     return writer_cls(**writer_kwargs).to(device)
 
 
@@ -242,7 +244,6 @@ def get_model_and_tokenizer(
     planner_model_path=None,
     overwrite_base=False,
     overwrite_planner=False,
-    train_e2e=False,
     vocab_size=None,
     tokenizer_path=None,
 ):
@@ -296,32 +297,21 @@ def get_model_and_tokenizer(
             model_config_key,
             max_seq_length
         )
-        if load_scratch:
-            if not train_e2e:
-                print("Initializing writer model from scratch...")
-                model.planner, _, _ = load_checkpoint(model.planner, planner_path, device=device)
-                if overwrite_base:
-                    print(f"Overwriting base model weights from {base_model_path}...")
-                    model.planner.encoder, _, _ = load_checkpoint(
-                        model.planner.encoder,
-                        base_model_path,
-                        device=device,
-                    )
-        else:
+        if not load_scratch:
             model, _, _ = load_checkpoint(model, writer_path, device=device)
-            if overwrite_base:
-                print(f"Overwriting base model weights from {base_model_path}...")
-                model.planner.encoder, _, _ = load_checkpoint(
-                    model.planner.encoder,
-                    base_model_path,
-                    device=device,
-                )
-            if overwrite_planner:
-                print(f"Overwriting planner model weights from {planner_path}...")
-                model.planner, _, _ = load_checkpoint(
-                    model.planner,
-                    planner_path,
-                    device=device,
-                )
+        if overwrite_planner:
+            print(f"Overwriting planner model weights from {planner_path}...")
+            model.planner, _, _ = load_checkpoint(
+                model.planner,
+                planner_path,
+                device=device,
+            )
+        if overwrite_base:
+            print(f"Overwriting base model weights from {base_model_path}...")
+            model.planner.encoder, _, _ = load_checkpoint(
+                model.planner.encoder,
+                base_model_path,
+                device=device,
+            )
 
     return tokenizer, model
