@@ -18,15 +18,16 @@ def train(dataset_name: str): # pylint: disable=too-many-locals,too-many-stateme
     """Train a GPT-2 style model on the specified dataset."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Starting Base Training on: {device}")
-    num_epochs = 30
+    num_epochs = 25
     learning_rate = 1e-4
 
-    base_working_model = 'gpt2_1024-l' # for bw, gpt2_512-l is used for treasure hunt and tinystories
+    base_working_model = 'gpt2_1024-s'
     ds_name = dataset_name
     stage = "base"
     model_map = {
         "gpt2_512-l": [512],
         "gpt2_1024-l": [1024],
+        "gpt2_1024-s": [1024],
     }
 
     dataset_config = get_dataset_config(name=ds_name)
@@ -174,4 +175,4 @@ def train(dataset_name: str): # pylint: disable=too-many-locals,too-many-stateme
     print("Phase 1: Baseline Training Complete!")
 
 if __name__ == "__main__":
-    train(dataset_name="blocksworld_sub")
+    train(dataset_name="blocksworld_lexical")
