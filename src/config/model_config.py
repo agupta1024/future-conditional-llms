@@ -35,6 +35,12 @@ _MODEL_DIM_CONFIG = {
         "n_head": 8,
         "z_latent": 2048,
     },
+    "1024-s": {
+        "n_embd": 512,
+        "n_layer": 10,
+        "n_head": 8,
+        "z_latent": 512,
+    },
     "1024-l": {
         "n_embd": 512,
         "n_layer": 20,

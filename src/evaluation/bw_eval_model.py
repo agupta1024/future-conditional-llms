@@ -3,12 +3,68 @@
 import os
 import re
 import json
+from collections import defaultdict
 import torch
 from transformers import set_seed
 
+from .plot_metrics import profile_model_efficiency
 from .blocksworld_simulator import BWSimulator
 from ..config.dataset_config import get_dataset_config
 from ..config.model_config import get_model_and_tokenizer
+
+def print_model_info(model, name="Model"):
+    """Prints the number of parameters and architecture dimensions of the model."""
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"--- {name} ---")
+    print(f"Total Parameters:     {total_params:,}")
+    print(f"Trainable Parameters: {trainable_params:,}")
+
+    if hasattr(model, 'planner'):
+        planner_params = sum(p.numel() for p in model.planner.parameters())
+        print(f"Planner Parameters:   {planner_params:,}")
+
+    if hasattr(model, 'config'):
+        print(f"Layers (n_layer):     {getattr(model.config, 'n_layer', 'N/A')}")
+        print(f"Hidden Dim (n_embd):  {getattr(model.config, 'n_embd', 'N/A')}")
+        print(f"Heads (n_head):       {getattr(model.config, 'n_head', 'N/A')}")
+
+def evaluate_model_efficiency(model_name, model, tokenizer,
+                              device, eval_data_path,
+                              context_windows):
+    # pylint: disable=too-many-locals, too-many-arguments, too-many-positional-arguments, too-many-branches
+    """
+    Evaluates the efficiency of the model in terms of inference time and memory usage.
+    """
+    model.eval()
+    c_bin = {f"context_{c}": defaultdict(list) for c in context_windows}
+    memory_usage = {
+        "tokens_per_second": [],
+        "peak_memory_mb": [],
+        "total_time_sec": [],
+    }
+    comma_id = tokenizer.convert_tokens_to_ids(",")
+    test_prompts = 10
+    for context_window in context_windows:
+        print(f"Evaluating efficiency for context window: {context_window}")
+        with open(eval_data_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                if test_prompts <= 0:
+                    break
+                test_prompts -= 1
+                data = json.loads(line)
+                prompt = data["prompt"] + " "
+                input_ids = tokenizer.encode(prompt, return_tensors="pt").to(device)
+                metrics = profile_model_efficiency(model_name, model, comma_id=comma_id,
+                                                    input_ids=input_ids, max_new_tokens=512,
+                                                    context_window=context_window)
+                for key, value in metrics.items():
+                    memory_usage[key].append(value)
+
+        c_bin[f"context_{context_window}"] = {k: sum(v) / len(v) for k, v in memory_usage.items()}
+    return c_bin
 
 def evaluate_dynamic_model(model, tokenizer, eval_data_path, is_dynamic=False,
                            num_samples=500, device=torch.device("cpu")):
@@ -44,7 +100,7 @@ def evaluate_dynamic_model(model, tokenizer, eval_data_path, is_dynamic=False,
                     generated_ids = model.generate(
                         input_ids=input_ids,
                         comma_id=comma_id,
-                        eos_id=eos_id,
+                        eos_token_id=eos_id,
                         max_new_tokens=50,
                     )
                 else:
@@ -98,6 +154,7 @@ def evaluate_dynamic_model(model, tokenizer, eval_data_path, is_dynamic=False,
 
 def main():
     """ Main function to evaluate the dynamic model and baseline model on Blocksworld dataset."""
+    # pylint: disable=too-many-locals
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Loading environment on {device}...")
     set_seed(42)
@@ -120,25 +177,33 @@ def main():
         'vocab_size': dataset_config.get("vocab_size", 100),
         'tokenizer_path': dataset_config.get("tokenizer_path", ""),
     }
+    context_windows = [8, 16, 32, 64]
 
     tokenizer, dynamic_model = get_model_and_tokenizer(**model_config)
     dynamic_model.to(device)
     dynamic_model.eval()
-
+    print_model_info(dynamic_model, "Dynamic Model")
+    efficiency_metrics = evaluate_model_efficiency("Ours", dynamic_model, tokenizer,
+                                                device, eval_data_path, context_windows)
     results = evaluate_dynamic_model(dynamic_model, tokenizer, eval_data_path,
                            is_dynamic=True, num_samples=500, device=device)
 
-    base_working_model = 'gpt2_1024-l'
+    base_working_model = 'gpt2_1024-s'
     model_config['working_model'] = base_working_model
     model_config['load_stage'] = 'base'
     _, baseline = get_model_and_tokenizer(**model_config)
     baseline.to(device)
     baseline.eval()
+    print_model_info(baseline, "Baseline Model")
+    baseline_efficiency_metrics = evaluate_model_efficiency("Baseline", baseline, tokenizer,
+                                                        device, eval_data_path, context_windows)
     baseline_results = evaluate_dynamic_model(baseline, tokenizer, eval_data_path,
                                is_dynamic=False, num_samples=500, device=device)
     final_results = {
         "dynamic_model": results,
-        "baseline_model": baseline_results
+        "baseline_model": baseline_results,
+        "efficiency_metrics": efficiency_metrics,
+        "baseline_efficiency_metrics": baseline_efficiency_metrics
     }
     os.makedirs("./bw_benchmarks", exist_ok=True)
     with open("./bw_benchmarks/eval_results.json", "w", encoding="utf-8") as f:

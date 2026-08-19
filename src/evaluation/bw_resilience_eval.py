@@ -43,7 +43,7 @@ def run_k_perturbation_benchmark():
     dynamic_model.to(device)
     dynamic_model.eval()
 
-    base_working_model = 'gpt2_1024-l'
+    base_working_model = 'gpt2_1024-s'
     model_config['working_model'] = base_working_model
     model_config['load_stage'] = 'base'
     _, baseline = get_model_and_tokenizer(**model_config)

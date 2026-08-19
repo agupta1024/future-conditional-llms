@@ -221,8 +221,8 @@ class LatentWriter(nn.Module):
         return logits
 
     @torch.no_grad()
-    def generate(self, input_ids, comma_id, eos_id,
-                 latent_plan=None,
+    def generate(self, input_ids, comma_id, eos_token_id,
+                 latent_plan=None, context_window=1024,
                  max_new_tokens=50, temperature=0.0):
         # pylint: disable=too-many-arguments, too-many-positional-arguments, too-many-locals
         """
@@ -248,9 +248,9 @@ class LatentWriter(nn.Module):
                                       ) >= prompt_len-1).float().unsqueeze(0).expand(
                                           generated_ids.size(0), -1)
             logits = self(
-                input_ids=generated_ids,
-                latent_plan=plan_history,
-                film_mask=film_mask
+                input_ids=generated_ids[:, -context_window:],
+                latent_plan=plan_history[:, -context_window:],
+                film_mask=film_mask[:, -context_window:]
             )
             next_token_logits = logits[:, -1, :]
             if temperature == 0.0:
@@ -266,6 +266,6 @@ class LatentWriter(nn.Module):
                 act_emb = encoder_outputs[:, -1, :]
                 p_curr = self.planner.step_plan(act_emb, p_curr)
             plan_history = torch.cat((plan_history, p_curr), dim=1)
-            if token_val == eos_id:
+            if token_val == eos_token_id:
                 break
         return generated_ids
