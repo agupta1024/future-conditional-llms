@@ -225,7 +225,7 @@ class LatentWriter(nn.Module):
     @torch.no_grad()
     def generate(self, input_ids, eos_token_id, pad_token_id=None,
                     latent_plan=None, context_window=512,
-                    max_new_tokens=50, temperature=0.0):
+                    max_new_tokens=50, temperature=0.0, **_kwargs):
         # pylint: disable=too-many-arguments, too-many-positional-arguments, too-many-locals
         """
         Standalone greedy generator to make testing the final model effortless.

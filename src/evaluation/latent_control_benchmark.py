@@ -130,7 +130,7 @@ def run_controllability_benchmark():
 
                 is_legal = True
                 generated_ids = model.generate(input_ids=decoder_ids, latent_plan=p_curr,
-                                            comma_id=comma_id, eos_id=eos_id, max_new_tokens=50)
+                                            comma_id=comma_id, eos_token_id=eos_id, max_new_tokens=50)
 
                 prompt_len = decoder_ids.size(1)
                 gen_text = tokenizer.decode(generated_ids[0][prompt_len:])
