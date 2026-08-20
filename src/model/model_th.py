@@ -103,7 +103,6 @@ class LatentDecoderBlock(nn.Module): # pylint: disable=too-many-instance-attribu
 
     def __init__(self, hidden_dim=512, num_heads=4, dropout=0.1):
         super().__init__()
-        # 1. Causal Self-Attention (Looking at the words written so far)
         self.self_attn = nn.MultiheadAttention(
             embed_dim=hidden_dim,
             num_heads=num_heads,
@@ -119,7 +118,6 @@ class LatentDecoderBlock(nn.Module): # pylint: disable=too-many-instance-attribu
         nn.init.zeros_(self.film_shift.weight)
         nn.init.zeros_(self.film_shift.bias)
 
-        # 3. Feed Forward Network
         self.mlp = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim * 4),
             nn.GELU(),
@@ -141,14 +139,14 @@ class LatentDecoderBlock(nn.Module): # pylint: disable=too-many-instance-attribu
             attn_mask=causal_mask,
             need_weights=False,
         )
-        x = x + attn_out  # Residual connection
+        x = x + attn_out
 
         scale = self.film_scale(latent_plan)  # (Batch, 1, Dim)
         shift = self.film_shift(latent_plan)  # (Batch, 1, Dim)
         if len(scale.shape) == 2:
             scale = scale.unsqueeze(1)
             shift = shift.unsqueeze(1)
-        # Modulate the normalized text features
+
         x_modulated = (self.ln3(x) * (1.0 + scale)) + shift
         x = x + self.mlp(x_modulated)
         return x
