@@ -175,8 +175,8 @@ if __name__ == "__main__":
     os.makedirs("./data_cache/treasure_hunt", exist_ok=True)
 
     build_dataset(
-        num_samples=10000,
-        filename="./data_cache/treasure_hunt/train.jsonl",
+        num_samples=50000,
+        filename="./data_cache/treasure_hunt/train_big.jsonl",
         min_len=50,
         max_len=300,
     )
