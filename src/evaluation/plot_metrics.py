@@ -119,27 +119,53 @@ def calculate_confidence_intervals(metric_data, confidence=0.95):
 
     return mean, lower_bound, upper_bound
 
+def pretty_print_metrics(data_ours, data_baseline, target_context=128,
+                        metric_name="target_retrieval", horizon=None):
+    """
+    Print metrics in a structured format.
+    """
+    horizons = sorted(list(data_ours[metric_name][target_context].keys()))
+    _, mean_ours, _, std_ours = calculate_bounds_for_metric(
+        data_ours[metric_name][target_context], horizons=horizons)
+    _, mean_base, _, std_base = calculate_bounds_for_metric(
+        data_baseline[metric_name][target_context], horizons=horizons)
+
+    pc_delta = np.divide(
+        (np.array(mean_ours) - np.array(mean_base)) * 100,
+        np.array(mean_base),
+        out=np.zeros_like(np.array(mean_base), dtype=float),
+        where=np.array(mean_base) != 0
+    )
+    pc_delta = np.round(pc_delta, 2)
+    std_ours = np.round(np.array(std_ours), 2)
+    std_base = np.round(np.array(std_base), 2)
+
+    print("" + "="*80)
+    print(f"Treasure Hunt: {metric_name} at Context W={target_context}")
+    for h, m_ours, std_ours, m_base, std_base, pc in zip(horizons, mean_ours, std_ours,
+                                                         mean_base, std_base, pc_delta):
+        if horizon is not None and h not in horizon:
+            continue
+        print("Horizon | Ours         | Baseline    | % Change")
+        print(f"{h}    | {m_ours:.2f} + {std_ours:.2f} | {m_base:.2f} + {std_base:.2f} | {pc:.2f}%")
+        print("" + "-"*80)
+    print("" + "="*80)
+
 def generate_th_retention_plot(data_ours, data_baseline, target_context=128,
-                               metric_name="target_retrieval"):
+                               metric_name="target_retrieval", horizon=None):
     # pylint: disable=too-many-locals
     """
     Generates Semantic Retention vs Horizon for the Treasure Hunt benchmark.
     """
     print(f"Generating Treasure Hunt {metric_name} Plot...")
     horizons = sorted(list(data_ours[metric_name][target_context].keys()))
-    lower_ours, mean_ours, upper_ours, std_ours = calculate_bounds_for_metric(
-        data_ours[metric_name][target_context], horizons=horizons)
-    lower_base, mean_base, upper_base, std_base = calculate_bounds_for_metric(
-        data_baseline[metric_name][target_context], horizons=horizons)
-    pc_delta = (np.array(mean_ours) - np.array(mean_base)) * 100/np.array(mean_base)
-    pc_delta = np.round(pc_delta, 2)
 
-    print("" + "="*80)
-    print(f"Treasure Hunt: {metric_name} at Context W={target_context}, Horizon={horizons}")
-    print(f"{metric_name}: Ours Mean: {mean_ours}, Ours std: {np.round(np.array(std_ours), 2)}, \
-        Baseline Mean: {mean_base}, Baseline std: {np.round(np.array(std_base), 2)}")
-    print(f"{metric_name}: Percentage Change: {pc_delta}")
-    print("" + "="*80)
+    lower_ours, mean_ours, upper_ours, _ = calculate_bounds_for_metric(
+        data_ours[metric_name][target_context], horizons=horizons)
+    lower_base, mean_base, upper_base, _ = calculate_bounds_for_metric(
+        data_baseline[metric_name][target_context], horizons=horizons)
+    pretty_print_metrics(data_ours, data_baseline, target_context=target_context,
+                        metric_name=metric_name, horizon=horizon)
 
     plt.style.use('seaborn-v0_8-whitegrid')
     _, ax = plt.subplots(figsize=(8, 5), dpi=300)
@@ -188,14 +214,14 @@ def aggregate_th_results_across_seeds(filetag, metric_name, seeds, skip_horizon=
             for c in data_ours["context_windows"]:
                 c_h_ours[(c)] = c_h_ours.get((c), {})
                 for h in data_ours["horizons"]:
-                    if skip_horizon is None or h != skip_horizon:
+                    if skip_horizon is None or h not in skip_horizon:
                         c_h_ours[(c)][(h)] = c_h_ours[(c)].get((h), [])
                         c_h_ours[(c)][(h)].append(data_ours["models"]["Ours"]
                                                   [f"context_{c}"][f"horizon_{h}"][metric_name])
             for h in data_ours["horizons"]:
                 h_c_ours[(h)] = h_c_ours.get((h), {})
                 for c in data_ours["context_windows"]:
-                    if skip_horizon is None or h != skip_horizon:
+                    if skip_horizon is None or h not in skip_horizon:
                         h_c_ours[(h)][(c)] = h_c_ours[(h)].get((c), [])
                         h_c_ours[(h)][(c)].append(data_ours["models"]["Ours"]
                                                   [f"context_{c}"][f"horizon_{h}"][metric_name])
@@ -208,14 +234,14 @@ def aggregate_th_results_across_seeds(filetag, metric_name, seeds, skip_horizon=
             for c in data_baseline["context_windows"]:
                 c_h_baseline[(c)] = c_h_baseline.get((c), {})
                 for h in data_baseline["horizons"]:
-                    if skip_horizon is None or h != skip_horizon:
+                    if skip_horizon is None or h not in skip_horizon:
                         c_h_baseline[(c)][(h)] = c_h_baseline[(c)].get((h), [])
                         c_h_baseline[(c)][(h)].append(data_baseline["models"]["Baseline"]
                                                       [f"context_{c}"][f"horizon_{h}"][metric_name])
             for h in data_baseline["horizons"]:
                 h_c_baseline[(h)] = h_c_baseline.get((h), {})
                 for c in data_baseline["context_windows"]:
-                    if skip_horizon is None or h != skip_horizon:
+                    if skip_horizon is None or h not in skip_horizon:
                         h_c_baseline[(h)][(c)] = h_c_baseline[(h)].get((c), [])
                         h_c_baseline[(h)][(c)].append(data_baseline["models"]["Baseline"]
                                                       [f"context_{c}"][f"horizon_{h}"][metric_name])
@@ -279,7 +305,8 @@ def calculate_efficiency(filetag, seeds):
     return c_eff_ours, c_eff_baseline
 
 def treasure_hunt_metric_analysis(filetag, seeds,
-                                  skip_horizon=None):
+                                  skip_horizon=None,
+                                  horizon=None):
     """
     Aggregates and plots metrics for the Treasure Hunt benchmark.
     """
@@ -293,7 +320,6 @@ def treasure_hunt_metric_analysis(filetag, seeds,
     for metric in metric_map:
         agg_metrics["Ours"][metric] = {}
         agg_metrics["Baseline"][metric] = {}
-        print(f"Aggregating results for metric: {metric}")
         ours, baseline = aggregate_th_results_across_seeds(
                                         filetag=filetag,
                                         metric_name=metric,
@@ -301,12 +327,11 @@ def treasure_hunt_metric_analysis(filetag, seeds,
                                         skip_horizon=skip_horizon)
         agg_metrics["Ours"][metric] = ours
         agg_metrics["Baseline"][metric] = baseline
-
-        print(f"Completed aggregation for metric: {metric}")
         generate_th_retention_plot(agg_metrics["Ours"], agg_metrics["Baseline"],
-                                   target_context=500, metric_name=metric)
+                                   target_context=500, metric_name=metric, horizon=horizon)
 
 if __name__ == "__main__":
     treasure_hunt_metric_analysis(filetag="./th_benchmarks/eval_results",
-                                  seeds=[42, 1337, 2024, 7777, 9999])
-    calculate_efficiency(filetag="./th_benchmarks/eval_results", seeds=[42, 1337, 2024, 7777, 9999])
+                                  seeds=[42, 1337, 2024, 7777, 9999], horizon=[128, 1024])
+    # calculate_efficiency(filetag="./th_benchmarks/eval_results",
+    #                      seeds=[42, 1337, 2024, 7777, 9999])
