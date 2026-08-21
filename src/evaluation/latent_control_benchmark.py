@@ -12,14 +12,15 @@ from .blocksworld_simulator import BWSimulator
 from ..config.dataset_config import get_dataset_config
 from ..config.model_config import get_model_and_tokenizer
 from ..dataset.generate_bw_sub import generate_random_state, bfs_solve
+from ..dataset.generate_bw_sub import BLOCKS
 
 def generate_conflicting_goals():
     """Generates an init state and two goals that require different paths."""
     while True:
-        init_state = generate_random_state(num_shuffles=20)
+        init_state = generate_random_state(num_shuffles=20, active_blocks=BLOCKS)
 
-        goal_a_state = generate_random_state(num_shuffles=5)
-        goal_b_state = generate_random_state(num_shuffles=5)
+        goal_a_state = generate_random_state(num_shuffles=5, active_blocks=BLOCKS)
+        goal_b_state = generate_random_state(num_shuffles=5, active_blocks=BLOCKS)
 
         if init_state == goal_a_state or init_state == goal_b_state or goal_a_state == goal_b_state:
             continue
@@ -27,8 +28,8 @@ def generate_conflicting_goals():
         ga_relaxed = set(cond for cond in goal_a_state if "on" in cond)
         gb_relaxed = set(cond for cond in goal_b_state if "on" in cond)
 
-        path_a = bfs_solve(init_state, ga_relaxed)
-        path_b = bfs_solve(init_state, gb_relaxed)
+        path_a = bfs_solve(init_state, ga_relaxed, active_blocks=BLOCKS)
+        path_b = bfs_solve(init_state, gb_relaxed, active_blocks=BLOCKS)
 
         if path_a and path_b and path_a[0] != path_b[0]:
             init_str = ", ".join(sorted(list(init_state)))
@@ -48,31 +49,27 @@ def run_controllability_benchmark():
     set_seed(42)
     print(f"Loading Models on {device}...")
 
-    base_working_model = 'gpt2_1024'
-    ds_name = "blocksworld_lexical"
-    stage = "writer"
-
+    ds_name = "blocksworld"
     dataset_config = get_dataset_config(name=ds_name)
-    writer_model_path = f"./{ds_name}_writer_model_{base_working_model}_goal_drop/writer_model.pt"
     model_config = {
-        'working_model': base_working_model,
         'max_seq_length': 1024,
         'load_scratch': False,
         'dataset_name': ds_name,
-        'load_stage': stage,
         'custom_ar': True,
         'film': True,
         'vocab_size': dataset_config.get("vocab_size", 100),
         'tokenizer_path': dataset_config.get("tokenizer_path", ""),
-        'writer_model_path': writer_model_path,
     }
-
+    base_working_model = 'gpt2_1024'
+    model_config['load_stage'] = 'writer'
+    model_config['working_model'] = base_working_model
+    writer_model_path = f'{ds_name}_writer_model_{base_working_model}_goal_drop/writer_model.pt'
+    model_config['writer_model_path'] = writer_model_path
     tokenizer, model = get_model_and_tokenizer(**model_config)
     model.to(device)
     model.eval()
 
-    base_working_model = 'gpt2_1024-l'
-    model_config['working_model'] = base_working_model
+    model_config['working_model'] = 'gpt2_1024-s'
     model_config['load_stage'] = 'base'
     _, base_model = get_model_and_tokenizer(**model_config)
     base_model.to(device)
@@ -83,6 +80,7 @@ def run_controllability_benchmark():
     eos_id = tokenizer.convert_tokens_to_ids("[DONE]")
 
     conditions = ["Control_A", "Control_B", "Adversarial_Swap", "Blank_Goal"]
+
     for seed in [42, 1337, 2024, 7777, 9999]:
         results = {c: {"goal_A": 0, "goal_B": 0, "legal": 0} for c in conditions}
         set_seed(seed)
@@ -130,7 +128,7 @@ def run_controllability_benchmark():
 
                 is_legal = True
                 generated_ids = model.generate(input_ids=decoder_ids, latent_plan=p_curr,
-                                            comma_id=comma_id, eos_token_id=eos_id, max_new_tokens=50)
+                                    comma_id=comma_id, eos_token_id=eos_id, max_new_tokens=50)
 
                 prompt_len = decoder_ids.size(1)
                 gen_text = tokenizer.decode(generated_ids[0][prompt_len:])
@@ -234,6 +232,7 @@ def mean_results():
             results[c]['goal_B'].append(data["Ours"][c]['goal_B'])
             results[c]['legal'].append(data["Ours"][c]['legal'])
 
+    print("\n=== MEAN RESULTS FOR Ours ===")
     for c in conditions:
         mean_ga = np.mean(results[c]['goal_A'])
         std_ga = np.std(results[c]['goal_A'])
@@ -241,24 +240,22 @@ def mean_results():
         std_gb = np.std(results[c]['goal_B'])
         mean_leg = np.mean(results[c]['legal'])
         std_leg = np.std(results[c]['legal'])
-        print("\n=== MEAN RESULTS FOR SEEDS ===")
         print(f"{c:<20} | {mean_ga:>14.1f}% ± {std_ga:.1f} |\
               {mean_gb:>14.1f}% ± {std_gb:.1f} | {mean_leg:>14.1f}% ± {std_leg:.1f}")
 
+    print("" + "-"*80)
     conditions = ["Control_A", "Control_B"]
     base_results = {c: {"goal_A": [], "goal_B": [], "legal": []} for c in conditions}
     for seed in [42, 1337, 2024, 7777, 9999]:
         with open(f"./bw_benchmarks/latent_control_results_{seed}.json", "r",
                   encoding="utf-8") as f:
             data = json.load(f)
-        print(f"{'Condition':<20} | {'Goal A Success':<15} |\
-                {'Goal B Success':<15} | {'Legal Actions':<15}")
-        print("-" * 80)
         for c in data["Baseline"].keys():
             base_results[c]['goal_A'].append(data["Baseline"][c]['goal_A'])
             base_results[c]['goal_B'].append(data["Baseline"][c]['goal_B'])
             base_results[c]['legal'].append(data["Baseline"][c]['legal'])
 
+    print("\n=== MEAN RESULTS FOR BASELINE ===")
     for c in conditions:
         mean_ga = np.mean(base_results[c]['goal_A'])
         std_ga = np.std(base_results[c]['goal_A'])
@@ -266,7 +263,6 @@ def mean_results():
         std_gb = np.std(base_results[c]['goal_B'])
         mean_leg = np.mean(base_results[c]['legal'])
         std_leg = np.std(base_results[c]['legal'])
-        print("\n=== MEAN RESULTS FOR SEEDS BASELINE ===")
         print(f"{c:<20} | {mean_ga:>14.1f}% ± {std_ga:.1f} |\
               {mean_gb:>14.1f}% ± {std_gb:.1f} | {mean_leg:>14.1f}% ± {std_leg:.1f}")
 
