@@ -3,6 +3,7 @@
 from torch import nn
 
 import torch
+from torch.nn import functional as F
 from transformers import GPT2LMHeadModel
 
 from .ar_gpt2 import GPT2Baseline
@@ -63,7 +64,6 @@ class LatentPlanner(nn.Module):
         past_ids: tokenized story (batch_size, seq_len)
         future_ids: tokenized story (batch_size, seq_len)
         attention_mask: attention mask (batch_size, seq_len)
-        split_idx: integer defining where the "past" ends and "future" begins
         """
         sequence_lengths = attention_mask.sum(dim=1) - 1
         batch_size = input_ids.shape[0]
@@ -93,12 +93,15 @@ class LatentPlanner(nn.Module):
 
         # pooled_past_latent = self.mean_pooling(hidden_states, attention_mask)
         last_token_hidden = hidden_states[torch.arange(batch_size), sequence_lengths, :]
-        # --- Predict the Future ---
-        # Only the predictor tracks gradients
         latent_plan = self.future_predictor(last_token_hidden)
 
         return latent_plan, true_future_latent, true_future_hidden_states
 
+    def get_initial_plan(self, input_ids, attention_mask):
+        """Get the initial latent plan from the prompt."""
+        with torch.no_grad():
+            latent_plan, _, _ = self.forward(input_ids, attention_mask)
+        return latent_plan
 
 class LatentDecoderBlock(nn.Module): # pylint: disable=too-many-instance-attributes
     """Decoder block that can condition on a latent future plan."""
@@ -106,7 +109,6 @@ class LatentDecoderBlock(nn.Module): # pylint: disable=too-many-instance-attribu
     def __init__(self, hidden_dim=512, num_heads=4, dropout=0.1, film=False):
         super().__init__()
         self.film = film
-        # 1. Causal Self-Attention (Looking at the words written so far)
         self.self_attn = nn.MultiheadAttention(
             embed_dim=hidden_dim,
             num_heads=num_heads,
@@ -116,8 +118,6 @@ class LatentDecoderBlock(nn.Module): # pylint: disable=too-many-instance-attribu
         self.ln1 = nn.LayerNorm(hidden_dim)
 
         if film:
-            # 2. FiLM Layers (Feature-wise Linear Modulation)
-            # Injects the latent plan directly into the activation stream
             self.film_scale = nn.Linear(hidden_dim, hidden_dim)
             self.film_shift = nn.Linear(hidden_dim, hidden_dim)
 
@@ -126,7 +126,6 @@ class LatentDecoderBlock(nn.Module): # pylint: disable=too-many-instance-attribu
             nn.init.zeros_(self.film_shift.weight)
             nn.init.zeros_(self.film_shift.bias)
         else:
-            # 2. Cross-Attention (Looking at the frozen Latent Plan)
             self.cross_attn = nn.MultiheadAttention(
                 embed_dim=hidden_dim,
                 num_heads=num_heads,
@@ -135,7 +134,6 @@ class LatentDecoderBlock(nn.Module): # pylint: disable=too-many-instance-attribu
             )
             self.ln2 = nn.LayerNorm(hidden_dim)
 
-        # 3. Feed Forward Network
         self.mlp = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim * 4),
             nn.GELU(),
@@ -157,7 +155,7 @@ class LatentDecoderBlock(nn.Module): # pylint: disable=too-many-instance-attribu
             attn_mask=causal_mask,
             need_weights=False,
         )
-        x = x + attn_out  # Residual connection
+        x = x + attn_out
 
         if self.film:
             scale = self.film_scale(latent_plan)  # (Batch, 1, Dim)
@@ -165,12 +163,8 @@ class LatentDecoderBlock(nn.Module): # pylint: disable=too-many-instance-attribu
             if len(scale.shape) == 2:
                 scale = scale.unsqueeze(1)
                 shift = shift.unsqueeze(1)
-            # Modulate the normalized text features
             x_modulated = (self.ln3(x) * (1.0 + scale)) + shift
         else:
-            # --- Step 2: Cross Attention (The "Compass") ---
-            # Query comes from text (x). Keys/Values come from the latent_plan.
-            # No mask needed here because the latent_plan is timeless.
             latent_plan = latent_plan.unsqueeze(1) if latent_plan.ndim == 2 else latent_plan
             cross_out, _ = self.cross_attn(
                 query=self.ln2(x),
@@ -178,7 +172,7 @@ class LatentDecoderBlock(nn.Module): # pylint: disable=too-many-instance-attribu
                 value=latent_plan,
                 need_weights=False,
             )
-            x_modulated = x + cross_out  # Residual connection
+            x_modulated = x + cross_out
             x_modulated = self.ln3(x_modulated)
 
         x = x + self.mlp(x_modulated)
@@ -205,12 +199,10 @@ class LatentWriter(nn.Module):
         self.hidden_dim = self.planner.hidden_dim
         pretrained_embeddings = self.planner.encoder.token_embedding.weight.data
 
-        # Token and Positional Embeddings
         self.token_embedding = nn.Embedding(vocab_size, self.hidden_dim)
         self.token_embedding.weight.data.copy_(pretrained_embeddings)
 
         self.position_embedding = nn.Embedding(max_seq_len, self.hidden_dim)
-        # Stack of Custom Decoder Blocks
         num_layers = self.planner.encoder.config.n_layer
         num_heads = self.planner.encoder.config.n_head
         self.layers = nn.ModuleList([
@@ -238,16 +230,15 @@ class LatentWriter(nn.Module):
 
         if latent_plan is None:
             assert prompt_ids is not None, "Must provide prompt_ids if latent_plan is None!"
+            if prompt_mask is None:
+                prompt_mask = torch.ones_like(prompt_ids)
             latent_plan, _, _ = self.planner(prompt_ids, prompt_mask)
 
-        # 1. Embeddings
         positions = torch.arange(0, seq_len, dtype=torch.long, device=device).unsqueeze(0)
         x = self.token_embedding(input_ids) + self.position_embedding(positions)
 
-        # 2. Causal Mask
         causal_mask = self.generate_causal_mask(seq_len, device)
 
-        # 3. Pass through Decoder Blocks
         for layer in self.layers:
             x = layer(x, latent_plan, causal_mask)
 
@@ -256,3 +247,50 @@ class LatentWriter(nn.Module):
             return x
         logits = self.lm_head(x)
         return logits
+
+    @torch.no_grad()
+    def generate(self, input_ids, eos_token_id, pad_token_id=None,
+                    latent_plan=None, context_window=512,
+                    max_new_tokens=50, temperature=0.0, **_kwargs):
+        # pylint: disable=too-many-arguments, too-many-positional-arguments, too-many-locals
+        """
+        Standalone greedy generator to make testing the final model effortless.
+        """
+        self.eval()
+        generated_ids = input_ids.clone()
+        batch_size, _ = input_ids.shape
+        prompt_mask = torch.ones_like(input_ids)
+        unfinished_sequences = torch.ones(batch_size, dtype=torch.bool,
+                                          device=input_ids.device)
+        if latent_plan is None:
+            latent_plan = self.planner.get_initial_plan(input_ids, prompt_mask)
+        fill_pad_id = (pad_token_id if pad_token_id is not None
+                       else (eos_token_id if eos_token_id is not None else 0))
+        for _ in range(max_new_tokens):
+            context_ids = generated_ids[:, -context_window:]
+            logits = self(
+                input_ids=context_ids,
+                latent_plan=latent_plan,
+            )
+            next_token_logits = logits[:, -1, :]
+            if temperature == 0.0:
+                next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
+            else:
+                next_token_logits = next_token_logits / temperature
+                probs = F.softmax(next_token_logits, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)
+            if eos_token_id is not None:
+                next_token_flat = next_token.squeeze(-1)
+                is_eos = next_token_flat == eos_token_id
+                next_token_flat = torch.where(
+                    unfinished_sequences,
+                    next_token_flat,
+                    fill_pad_id
+                )
+                unfinished_sequences = unfinished_sequences & (~is_eos)
+                next_token = next_token_flat.unsqueeze(-1)
+
+            generated_ids = torch.cat((generated_ids, next_token), dim=1)
+            if eos_token_id is not None and not unfinished_sequences.any():
+                break
+        return generated_ids

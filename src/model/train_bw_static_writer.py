@@ -17,8 +17,8 @@ def train_dynamic_e2e(objective=""):
     """Train blocksworld Writer"""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Starting End-to-End Continuous Plan Training on {device}...")
-    num_epochs=20
-    learning_rate=1e-5
+    num_epochs=25
+    learning_rate=1e-4
 
     base_working_model = 'gpt2_1024'
     ds_name = "blocksworld"
@@ -41,7 +41,6 @@ def train_dynamic_e2e(objective=""):
         tokenizer_path=dataset_config.get("tokenizer_path", ""),
         is_ddp=False
     )
-
     _, model = get_model_and_tokenizer(
         working_model=base_working_model,
         max_seq_length=1024,
@@ -55,7 +54,7 @@ def train_dynamic_e2e(objective=""):
     )
     model.to(device)
 
-    outdir = f'./{ds_name}_{stage}_model_{base_working_model}{objective}'
+    outdir = f'./{ds_name}_{stage}_static_model_{base_working_model}{objective}'
     os.makedirs(outdir, exist_ok=True)
 
     optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=0.01)
@@ -93,21 +92,7 @@ def train_dynamic_e2e(objective=""):
             optimizer.zero_grad()
             b_size, seq_len = input_ids.shape
             p_0 = model.planner.get_initial_plan(prompt_ids, prompt_mask)
-            traj_hidden = model.planner.encoder(input_ids, return_hidden_states=True)
-
-            p_seq = []
-            p_curr = p_0
-
-            for t in range(seq_len):
-                has_update = update_mask[:, t]
-                if has_update.any():
-                    act_emb = traj_hidden[:, t, :]
-                    p_next = model.planner.step_plan(act_emb, p_curr)
-                    mask_expanded = has_update.bool().view(b_size, 1, 1).expand_as(p_curr)
-                    p_curr = torch.where(mask_expanded, p_next, p_curr)
-
-                p_seq.append(p_curr)
-            p_seq_tensor = torch.cat(p_seq, dim=1)
+            p_seq_tensor = p_0.expand(-1, seq_len, -1)
 
             film_mask = torch.zeros_like(input_ids, dtype=torch.float, device=device)
             for i in range(b_size):
@@ -140,9 +125,7 @@ def train_dynamic_e2e(objective=""):
 
             optimizer.step()
             scheduler.step()
-
             total_train_loss += final_loss.item()
-
         if (epoch + 1) % 5 == 0 or epoch == num_epochs - 1:
             checkpoint_path = os.path.join(outdir, f"checkpoint_{epoch + 1}.pt")
             torch.save(model.state_dict(), checkpoint_path)
@@ -201,6 +184,7 @@ def train_dynamic_e2e(objective=""):
                 flat_labels = shift_labels.view(-1)
                 valid_mask = (flat_labels != -100).float()
                 effective_weights = flat_weights * valid_mask
+
                 final_loss = ((loss_per_token * effective_weights).sum() /
                               (effective_weights.sum() + 1e-8))
                 total_eval_loss += final_loss.item()

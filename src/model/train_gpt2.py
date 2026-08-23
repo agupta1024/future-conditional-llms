@@ -22,10 +22,13 @@ def train(dataset_name: str): # pylint: disable=too-many-locals,too-many-stateme
     learning_rate = 1e-4
 
     base_working_model = 'gpt2_1024-s'
+    # base_working_model = 'gpt2_512-l'
+    # base_working_model = 'gpt2_1024'
     ds_name = dataset_name
     stage = "base"
     model_map = {
         "gpt2_512-l": [512],
+        "gpt2_1024": [1024],
         "gpt2_1024-l": [1024],
         "gpt2_1024-s": [1024],
     }
@@ -69,7 +72,7 @@ def train(dataset_name: str): # pylint: disable=too-many-locals,too-many-stateme
         load_stage=stage,
         custom_ar=True,
         vocab_size=dataset_config.get("vocab_size", 50257),
-        tokenizer_path=dataset_config.get("tokenizer_path", "")
+        tokenizer_path=dataset_config.get("tokenizer_path", ""),
     )
     model.to(device)
 
@@ -100,7 +103,7 @@ def train(dataset_name: str): # pylint: disable=too-many-locals,too-many-stateme
                 input_ids = input_ids[:, :model.config.n_positions]
                 labels = labels[:, :model.config.n_positions]
                 weights = weights[:, :model.config.n_positions]
-            input_ids = torch.clamp(input_ids, min=0, max=model.config.vocab_size - 1)
+            # input_ids = torch.clamp(input_ids, min=0, max=model.config.vocab_size - 1)
 
             logits = model(input_ids)
 
@@ -108,15 +111,20 @@ def train(dataset_name: str): # pylint: disable=too-many-locals,too-many-stateme
             shift_labels = labels[..., 1:].contiguous()
             shift_weights = weights[..., 1:].contiguous()
 
-            loss = F.cross_entropy(
+            loss_per_token = F.cross_entropy(
                 shift_logits.view(-1, model.config.vocab_size),
                 shift_labels.view(-1),
-                ignore_index=-100
+                ignore_index=-100,
+                reduction='none'
             )
-            weighted_loss = loss * shift_weights.view(-1)
+            flat_weights = shift_weights.view(-1)
+            flat_labels = shift_labels.view(-1)
+            valid_mask = (flat_labels != -100).float()
+            effective_weights = flat_weights * valid_mask
 
-            active_tokens = (shift_weights.view(-1) > 0).sum()
-            loss = weighted_loss.sum() / active_tokens
+            loss = ((loss_per_token * effective_weights).sum() /
+                    (effective_weights.sum() + 1e-8))
+
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.zero_grad()
             loss.backward()
@@ -145,21 +153,25 @@ def train(dataset_name: str): # pylint: disable=too-many-locals,too-many-stateme
                     input_ids = input_ids[:, :model.config.n_positions]
                     labels = labels[:, :model.config.n_positions]
                     weights = weights[:, :model.config.n_positions]
-                input_ids = torch.clamp(input_ids, min=0, max=model.config.vocab_size - 1)
+                # input_ids = torch.clamp(input_ids, min=0, max=model.config.vocab_size - 1)
                 logits = model(input_ids)
 
                 shift_logits = logits[..., :-1, :].contiguous()
                 shift_labels = labels[..., 1:].contiguous()
                 shift_weights = weights[..., 1:].contiguous()
 
-                loss = F.cross_entropy(
+                loss_per_token = F.cross_entropy(
                     shift_logits.view(-1, model.config.vocab_size),
                     shift_labels.view(-1),
-                    ignore_index=-100
+                    ignore_index=-100,
+                    reduction='none'
                 )
-                weighted_loss = loss * shift_weights.view(-1)
-                active_tokens = (shift_weights.view(-1) > 0).sum()
-                loss = weighted_loss.sum() / active_tokens
+                flat_weights = shift_weights.view(-1)
+                flat_labels = shift_labels.view(-1)
+                valid_mask = (flat_labels != -100).float()
+                effective_weights = flat_weights * valid_mask
+                loss = ((loss_per_token * effective_weights).sum() /
+                        (effective_weights.sum() + 1e-8))
 
                 total_eval_loss += loss.item()
 
@@ -175,4 +187,5 @@ def train(dataset_name: str): # pylint: disable=too-many-locals,too-many-stateme
     print("Phase 1: Baseline Training Complete!")
 
 if __name__ == "__main__":
-    train(dataset_name="blocksworld_lexical")
+    # train(dataset_name="treasure_hunt")
+    train(dataset_name="blocksworld")
