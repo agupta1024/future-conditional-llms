@@ -40,8 +40,6 @@ def generate_conflicting_goals():
 def run_controllability_benchmark():
     # pylint: disable=too-many-locals, too-many-branches, too-many-statements
     """Runs the latent controllability benchmark on the Blocksworld dataset."""
-    num_samples=100
-
     torch.cuda.empty_cache()
     gc.collect()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -65,9 +63,15 @@ def run_controllability_benchmark():
     model_config['working_model'] = base_working_model
     writer_model_path = f'{ds_name}_writer_model_{base_working_model}_goal_drop/writer_model.pt'
     model_config['writer_model_path'] = writer_model_path
-    tokenizer, model = get_model_and_tokenizer(**model_config)
-    model.to(device)
-    model.eval()
+    tokenizer, gd_model = get_model_and_tokenizer(**model_config)
+    gd_model.to(device)
+    gd_model.eval()
+
+    writer_model_path = f'{ds_name}_writer_model_{base_working_model}/writer_model.pt'
+    model_config['writer_model_path'] = writer_model_path
+    tokenizer, std_model = get_model_and_tokenizer(**model_config)
+    std_model.to(device)
+    std_model.eval()
 
     model_config['working_model'] = 'gpt2_1024-s'
     model_config['load_stage'] = 'base'
@@ -79,10 +83,12 @@ def run_controllability_benchmark():
     comma_id = tokenizer.convert_tokens_to_ids(",")
     eos_id = tokenizer.convert_tokens_to_ids("[DONE]")
 
-    conditions = ["Control_A", "Control_B", "Adversarial_Swap", "Blank_Goal"]
+    conditions = ["Control_A", "Control_B", "Adversarial_Swap",
+                  "Blank_Goal_Text", "Blank_Goal_Latent"]
 
-    for seed in [42, 1337, 2024, 7777, 9999]:
-        results = {c: {"goal_A": 0, "goal_B": 0, "legal": 0} for c in conditions}
+    for seed in [42, 1337, 2024, 7777, 9999]: #pylint: disable=too-many-nested-blocks
+        results_std = {c: {"goal_A": 0, "goal_B": 0, "legal": 0} for c in conditions}
+        results_gd = {c: {"goal_A": 0, "goal_B": 0, "legal": 0} for c in conditions}
         set_seed(seed)
         random.seed(seed)
         torch.manual_seed(seed)
@@ -97,7 +103,6 @@ def run_controllability_benchmark():
             cond_b = {c.strip() for c in goal_b.split(",")}
 
             for condition in conditions:
-                sim = BWSimulator(init_str)
                 decoder_prompt = ""
                 if condition == "Control_A":
                     planner_prompt = f"[INIT] {init_str} [GOAL] {goal_a} "
@@ -110,55 +115,76 @@ def run_controllability_benchmark():
                 elif condition == "Adversarial_Swap":
                     planner_prompt = f"[INIT] {init_str} [GOAL] {goal_b} "
                     decoder_prompt = f"[INIT] {init_str} [GOAL] {goal_a} "
-                elif condition == "Blank_Goal":
+                elif condition == "Blank_Goal_Text":
                     planner_prompt = f"[INIT] {init_str} [GOAL] {goal_b} "
                     decoder_prompt = f"[INIT] {init_str} [GOAL] "
+                elif condition == "Blank_Goal_Latent":
+                    planner_prompt = f"[INIT] {init_str} [GOAL] "
+                    decoder_prompt = f"[INIT] {init_str} [GOAL] {goal_a}"
 
                 planner_ids = tokenizer.encode(planner_prompt, return_tensors="pt").to(device)
                 decoder_ids = tokenizer.encode(decoder_prompt, return_tensors="pt").to(device)
-
                 if decoder_ids.size(1) < planner_ids.size(1):
                     num_pads = planner_ids.size(1) - decoder_ids.size(1)
                     pad_tensor = torch.full((1, num_pads), tokenizer.pad_token_id,
                                             dtype=torch.long, device=device)
                     decoder_ids = torch.cat((decoder_ids, pad_tensor), dim=1)
-                with torch.no_grad():
-                    prompt_mask = torch.ones_like(planner_ids).to(device)
-                    p_curr = model.planner.get_initial_plan(planner_ids, prompt_mask)
 
-                is_legal = True
-                generated_ids = model.generate(input_ids=decoder_ids, latent_plan=p_curr,
-                                    comma_id=comma_id, eos_token_id=eos_id, max_new_tokens=50)
+                for model, model_type in [(gd_model, "goal_drop"), (std_model, "std")]:
+                    sim = BWSimulator(init_str)
+                    with torch.no_grad():
+                        prompt_mask = torch.ones_like(planner_ids).to(device)
+                        p_curr = model.planner.get_initial_plan(planner_ids, prompt_mask)
 
-                prompt_len = decoder_ids.size(1)
-                gen_text = tokenizer.decode(generated_ids[0][prompt_len:])
-                gen_text = gen_text.replace("[DONE]", "").strip()
-                actions = [a.strip() for a in gen_text.split(",") if a.strip()]
-                for action in actions:
-                    latest_action = action.strip()
-                    if not sim.apply_action(latest_action):
-                        is_legal = False
-                        break
+                    is_legal = True
+                    generated_ids = model.generate(input_ids=decoder_ids, latent_plan=p_curr,
+                                        comma_id=comma_id, eos_token_id=eos_id, max_new_tokens=50)
 
-                if is_legal:
-                    results[condition]["legal"] += 1
-                if cond_a.issubset(sim.state) and is_legal:
-                    results[condition]["goal_A"] += 1
-                if cond_b.issubset(sim.state) and is_legal:
-                    results[condition]["goal_B"] += 1
+                    prompt_len = decoder_ids.size(1)
+                    gen_text = tokenizer.decode(generated_ids[0][prompt_len:])
+                    gen_text = gen_text.replace("[DONE]", "").strip()
+                    actions = [a.strip() for a in gen_text.split(",") if a.strip()]
+                    for action in actions:
+                        latest_action = action.strip()
+                        if not sim.apply_action(latest_action):
+                            is_legal = False
+                            break
+
+                    if is_legal:
+                        if model_type == "std":
+                            results_std[condition]["legal"] += 1
+                        else:
+                            results_gd[condition]["legal"] += 1
+                    if cond_a.issubset(sim.state) and is_legal:
+                        if model_type == "std":
+                            results_std[condition]["goal_A"] += 1
+                        else:
+                            results_gd[condition]["goal_A"] += 1
+                    if cond_b.issubset(sim.state) and is_legal:
+                        if model_type == "std":
+                            results_std[condition]["goal_B"] += 1
+                        else:
+                            results_gd[condition]["goal_B"] += 1
 
             if (i + 1) % 10 == 0:
                 print(f"Completed {i + 1}/{num_samples} trials...")
 
         print("\n" + "="*80)
-        print("FINAL RESULTS: LATENT CONTROLLABILITY")
+        print("FINAL RESULTS: LATENT CONTROLLABILITY Std_Curriculumn")
         print(f"{'Condition':<20} | {'Goal A Success':<15} |\
             {'Goal B Success':<15} | {'Legal Actions':<15}")
         print("-" * 80)
         for c in conditions:
-            ga = (results[c]['goal_A'] / num_samples) * 100
-            gb = (results[c]['goal_B'] / num_samples) * 100
-            leg = (results[c]['legal'] / num_samples) * 100
+            ga = (results_std[c]['goal_A'] / num_samples) * 100
+            gb = (results_std[c]['goal_B'] / num_samples) * 100
+            leg = (results_std[c]['legal'] / num_samples) * 100
+            print(f"{c:<20} | {ga:>14.1f}% | {gb:>14.1f}% | {leg:>14.1f}%")
+        print("-" * 80)
+        print("LATENT CONTROLLABILITY Modality Dropout")
+        for c in conditions:
+            ga = (results_gd[c]['goal_A'] / num_samples) * 100
+            gb = (results_gd[c]['goal_B'] / num_samples) * 100
+            leg = (results_gd[c]['legal'] / num_samples) * 100
             print(f"{c:<20} | {ga:>14.1f}% | {gb:>14.1f}% | {leg:>14.1f}%")
 
         # Baseline: Evaluate the base model on the same prompts for comparison
@@ -211,7 +237,7 @@ def run_controllability_benchmark():
             print(f"Goal A Success Rate: {(success_a_count / len(prompts)) * 100:.1f}%")
             print(f"Goal B Success Rate: {(success_b_count / len(prompts)) * 100:.1f}%")
 
-        final_results = {"Ours": results, "Baseline": base_results}
+        final_results = {"Ours_std": results_std, "Ours_gd": results_gd, "Baseline": base_results}
         with open(f"./bw_benchmarks/latent_control_results_{seed}.json", "w",
                   encoding="utf-8") as f:
             json.dump(final_results, f, indent=4)
@@ -221,18 +247,19 @@ def run_controllability_benchmark():
 
 def mean_results():
     """Computes the mean and std of results across seeds."""
-    conditions = ["Control_A", "Control_B", "Adversarial_Swap", "Blank_Goal"]
+    conditions = ["Control_A", "Control_B", "Adversarial_Swap",
+                  "Blank_Goal_Text", "Blank_Goal_Latent"]
     results = {c: {"goal_A": [], "goal_B": [], "legal": []} for c in conditions}
     for seed in [42, 1337, 2024, 7777, 9999]:
         with open(f"./bw_benchmarks/latent_control_results_{seed}.json", "r",
                   encoding="utf-8") as f:
             data = json.load(f)
-        for c in data["Ours"].keys():
-            results[c]['goal_A'].append(data["Ours"][c]['goal_A'])
-            results[c]['goal_B'].append(data["Ours"][c]['goal_B'])
-            results[c]['legal'].append(data["Ours"][c]['legal'])
+        for c in data["Ours_std"].keys():
+            results[c]['goal_A'].append(data["Ours_std"][c]['goal_A'])
+            results[c]['goal_B'].append(data["Ours_std"][c]['goal_B'])
+            results[c]['legal'].append(data["Ours_std"][c]['legal'])
 
-    print("\n=== MEAN RESULTS FOR Ours ===")
+    print("\n=== MEAN RESULTS FOR Ours Std===")
     for c in conditions:
         mean_ga = np.mean(results[c]['goal_A'])
         std_ga = np.std(results[c]['goal_A'])
@@ -242,6 +269,28 @@ def mean_results():
         std_leg = np.std(results[c]['legal'])
         print(f"{c:<20} | {mean_ga:>14.1f}% ± {std_ga:.1f} |\
               {mean_gb:>14.1f}% ± {std_gb:.1f} | {mean_leg:>14.1f}% ± {std_leg:.1f}")
+
+    print("" + "-"*80)
+    results = {c: {"goal_A": [], "goal_B": [], "legal": []} for c in conditions}
+    for seed in [42, 1337, 2024, 7777, 9999]:
+        with open(f"./bw_benchmarks/latent_control_results_{seed}.json", "r",
+                    encoding="utf-8") as f:
+            data = json.load(f)
+        for c in data["Ours_gd"].keys():
+            results[c]['goal_A'].append(data["Ours_gd"][c]['goal_A'])
+            results[c]['goal_B'].append(data["Ours_gd"][c]['goal_B'])
+            results[c]['legal'].append(data["Ours_gd"][c]['legal'])
+
+    print("\n=== MEAN RESULTS FOR Ours Goal Drop ===")
+    for c in conditions:
+        mean_ga = np.mean(results[c]['goal_A'])
+        std_ga = np.std(results[c]['goal_A'])
+        mean_gb = np.mean(results[c]['goal_B'])
+        std_gb = np.std(results[c]['goal_B'])
+        mean_leg = np.mean(results[c]['legal'])
+        std_leg = np.std(results[c]['legal'])
+        print(f"{c:<20} | {mean_ga:>14.1f}% ± {std_ga:.1f} |\
+                {mean_gb:>14.1f}% ± {std_gb:.1f} | {mean_leg:>14.1f}% ± {std_leg:.1f}")
 
     print("" + "-"*80)
     conditions = ["Control_A", "Control_B"]

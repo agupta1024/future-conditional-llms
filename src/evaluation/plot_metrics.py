@@ -253,6 +253,7 @@ def calculate_efficiency(filetag, seeds):
     """Calculate efficiency metrics for both ours and baseline models."""
     c_eff_ours = {}
     c_eff_baseline = {}
+    metric_names = set()
     for seed in seeds:
         filename_ours = f"{filetag}_{seed}.json"
         with open(filename_ours, "r", encoding="utf-8") as f:
@@ -264,6 +265,7 @@ def calculate_efficiency(filetag, seeds):
                 for metric_name, val in efficiency_metrics.items():
                     c_eff_ours[(c)][(metric_name)] = c_eff_ours[(c)].get((metric_name), [])
                     c_eff_ours[(c)][(metric_name)].append(val)
+                    metric_names.add(metric_name)
 
     for seed in seeds:
         filename_baseline = f"{filetag}_{seed}.json"
@@ -283,7 +285,7 @@ def calculate_efficiency(filetag, seeds):
     for c in c_eff_baseline:
         c_eff_baseline[(c)] = {metric_name: [np.mean(values).item(), np.std(values, ddof=1).item()]
                                for metric_name, values in c_eff_baseline[(c)].items()}
-    metric_names = list(c_eff_ours.keys())
+
     for c, data in c_eff_ours.items():
         print(f"Context Window: {c}")
         print("Ours Efficiency Metrics:")

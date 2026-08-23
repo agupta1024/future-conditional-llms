@@ -148,7 +148,6 @@ def evaluate_dynamic_model(model, tokenizer, eval_data_path, is_dynamic=False,
         "average_partial_completion": (total_partial / num_samples) if num_samples > 0 else 0
     }
     print(f"Goal Success Rate (Perfect Plan): {(total_success / num_samples) * 100:.1f}%")
-    print(f"Legal Action Trajectories:        {(total_legal / num_samples) * 100:.1f}%")
     print(f"Average Partial Completion:       {total_partial / num_samples:.1f}%")
     return results
 
@@ -184,7 +183,7 @@ def main():
     efficiency_metrics = evaluate_model_efficiency("Ours", dynamic_model, tokenizer,
                                                 device, eval_data_path, context_windows)
     results = evaluate_dynamic_model(dynamic_model, tokenizer, eval_data_path,
-                           is_dynamic=True, num_samples=100, device=device)
+                           is_dynamic=True, num_samples=500, device=device)
 
     model_config['working_model'] = 'gpt2_1024-s'
     model_config['load_stage'] = 'base'
