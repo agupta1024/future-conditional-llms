@@ -1,0 +1,36 @@
+{
+    "Ours": {
+        "Control_A": {
+            "goal_A": 70,
+            "goal_B": 0,
+            "legal": 75
+        },
+        "Control_B": {
+            "goal_A": 0,
+            "goal_B": 74,
+            "legal": 76
+        },
+        "Adversarial_Swap": {
+            "goal_A": 0,
+            "goal_B": 69,
+            "legal": 79
+        },
+        "Blank_Goal": {
+            "goal_A": 0,
+            "goal_B": 74,
+            "legal": 79
+        }
+    },
+    "Baseline": {
+        "Control_A": {
+            "goal_A": 70.6,
+            "goal_B": 0,
+            "legal": 72.4
+        },
+        "Control_B": {
+            "goal_A": 0,
+            "goal_B": 67.4,
+            "legal": 70
+        }
+    }
+}
