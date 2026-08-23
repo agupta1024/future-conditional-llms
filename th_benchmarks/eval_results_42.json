@@ -1,0 +1,181 @@
+{
+    "horizons": [
+        128,
+        256,
+        512,
+        1024
+    ],
+    "context_windows": [
+        128,
+        256,
+        500
+    ],
+    "models": {
+        "Ours": {
+            "context_128": {
+                "horizon_128": {
+                    "target_retrieval": 100.0,
+                    "passkey_retrieval": 92.0,
+                    "exact_match": 92.0
+                },
+                "horizon_256": {
+                    "target_retrieval": 100.0,
+                    "passkey_retrieval": 86.0,
+                    "exact_match": 86.0
+                },
+                "horizon_512": {
+                    "target_retrieval": 100.0,
+                    "passkey_retrieval": 93.0,
+                    "exact_match": 93.0
+                },
+                "horizon_1024": {
+                    "target_retrieval": 100.0,
+                    "passkey_retrieval": 89.0,
+                    "exact_match": 89.0
+                },
+                "efficiency": {
+                    "tokens_per_second": 1644.406252190678,
+                    "peak_memory_mb": 2285.68779296875,
+                    "total_time_sec": 9.963882350921631
+                }
+            },
+            "context_256": {
+                "horizon_128": {
+                    "target_retrieval": 100.0,
+                    "passkey_retrieval": 87.0,
+                    "exact_match": 87.0
+                },
+                "horizon_256": {
+                    "target_retrieval": 100.0,
+                    "passkey_retrieval": 91.0,
+                    "exact_match": 91.0
+                },
+                "horizon_512": {
+                    "target_retrieval": 100.0,
+                    "passkey_retrieval": 93.0,
+                    "exact_match": 93.0
+                },
+                "horizon_1024": {
+                    "target_retrieval": 100.0,
+                    "passkey_retrieval": 90.0,
+                    "exact_match": 90.0
+                },
+                "efficiency": {
+                    "tokens_per_second": 1294.8985133277918,
+                    "peak_memory_mb": 3074.31328125,
+                    "total_time_sec": 13.647204971313476
+                }
+            },
+            "context_500": {
+                "horizon_128": {
+                    "target_retrieval": 100.0,
+                    "passkey_retrieval": 93.0,
+                    "exact_match": 93.0
+                },
+                "horizon_256": {
+                    "target_retrieval": 100.0,
+                    "passkey_retrieval": 89.0,
+                    "exact_match": 89.0
+                },
+                "horizon_512": {
+                    "target_retrieval": 100.0,
+                    "passkey_retrieval": 92.0,
+                    "exact_match": 92.0
+                },
+                "horizon_1024": {
+                    "target_retrieval": 100.0,
+                    "passkey_retrieval": 80.0,
+                    "exact_match": 80.0
+                },
+                "efficiency": {
+                    "tokens_per_second": 1059.6669991347985,
+                    "peak_memory_mb": 4340.81962890625,
+                    "total_time_sec": 18.367335653305055
+                }
+            }
+        },
+        "Baseline": {
+            "context_128": {
+                "horizon_128": {
+                    "target_retrieval": 7.000000000000001,
+                    "passkey_retrieval": 3.0,
+                    "exact_match": 0.0
+                },
+                "horizon_256": {
+                    "target_retrieval": 6.0,
+                    "passkey_retrieval": 0.0,
+                    "exact_match": 0.0
+                },
+                "horizon_512": {
+                    "target_retrieval": 6.0,
+                    "passkey_retrieval": 0.0,
+                    "exact_match": 0.0
+                },
+                "horizon_1024": {
+                    "target_retrieval": 6.0,
+                    "passkey_retrieval": 0.0,
+                    "exact_match": 0.0
+                },
+                "efficiency": {
+                    "tokens_per_second": 634.2880410466495,
+                    "peak_memory_mb": 2293.807275390625,
+                    "total_time_sec": 25.830961441993715
+                }
+            },
+            "context_256": {
+                "horizon_128": {
+                    "target_retrieval": 100.0,
+                    "passkey_retrieval": 39.0,
+                    "exact_match": 39.0
+                },
+                "horizon_256": {
+                    "target_retrieval": 34.0,
+                    "passkey_retrieval": 44.0,
+                    "exact_match": 18.0
+                },
+                "horizon_512": {
+                    "target_retrieval": 10.0,
+                    "passkey_retrieval": 0.0,
+                    "exact_match": 0.0
+                },
+                "horizon_1024": {
+                    "target_retrieval": 8.0,
+                    "passkey_retrieval": 0.0,
+                    "exact_match": 0.0
+                },
+                "efficiency": {
+                    "tokens_per_second": 500.4895081810576,
+                    "peak_memory_mb": 3086.464013671875,
+                    "total_time_sec": 35.255851209163666
+                }
+            },
+            "context_500": {
+                "horizon_128": {
+                    "target_retrieval": 100.0,
+                    "passkey_retrieval": 37.0,
+                    "exact_match": 37.0
+                },
+                "horizon_256": {
+                    "target_retrieval": 100.0,
+                    "passkey_retrieval": 38.0,
+                    "exact_match": 38.0
+                },
+                "horizon_512": {
+                    "target_retrieval": 0.0,
+                    "passkey_retrieval": 0.0,
+                    "exact_match": 0.0
+                },
+                "horizon_1024": {
+                    "target_retrieval": 0.0,
+                    "passkey_retrieval": 0.0,
+                    "exact_match": 0.0
+                },
+                "efficiency": {
+                    "tokens_per_second": 415.06739890882614,
+                    "peak_memory_mb": 4359.321598307291,
+                    "total_time_sec": 45.866066273053484
+                }
+            }
+        }
+    }
+}

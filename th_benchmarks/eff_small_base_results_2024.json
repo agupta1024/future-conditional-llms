@@ -1,0 +1,84 @@
+{
+    "horizons": [
+        128,
+        256,
+        512,
+        1024
+    ],
+    "context_windows": [
+        128,
+        256,
+        500
+    ],
+    "models": {
+        "Ours": {
+            "context_128": {
+                "efficiency": {
+                    "tokens_per_second": 3342.409657679923,
+                    "peak_memory_mb": 2460.823828125,
+                    "total_time_sec": 4.790043449401855
+                }
+            },
+            "context_256": {
+                "efficiency": {
+                    "tokens_per_second": 2635.7670223688883,
+                    "peak_memory_mb": 3249.44931640625,
+                    "total_time_sec": 6.542802000045777
+                }
+            },
+            "context_500": {
+                "efficiency": {
+                    "tokens_per_second": 2161.1616767240594,
+                    "peak_memory_mb": 4515.9556640625,
+                    "total_time_sec": 8.763228702545167
+                }
+            }
+        },
+        "Baseline": {
+            "context_128": {
+                "efficiency": {
+                    "tokens_per_second": 3577.5469378533985,
+                    "peak_memory_mb": 2468.9431640625,
+                    "total_time_sec": 4.474546957015991
+                }
+            },
+            "context_256": {
+                "efficiency": {
+                    "tokens_per_second": 2750.308925208049,
+                    "peak_memory_mb": 3261.59990234375,
+                    "total_time_sec": 6.3979113578796385
+                }
+            },
+            "context_500": {
+                "efficiency": {
+                    "tokens_per_second": 2245.17577795973,
+                    "peak_memory_mb": 4534.457486979167,
+                    "total_time_sec": 8.585153023401896
+                }
+            }
+        },
+        "B_L": {
+            "context_128": {
+                "efficiency": {
+                    "tokens_per_second": 1385.825794436248,
+                    "peak_memory_mb": 2468.9431640625,
+                    "total_time_sec": 11.54636526107788
+                }
+            },
+            "context_256": {
+                "efficiency": {
+                    "tokens_per_second": 1068.0333073198285,
+                    "peak_memory_mb": 3261.59990234375,
+                    "total_time_sec": 16.437442898750305
+                }
+            },
+            "context_500": {
+                "efficiency": {
+                    "tokens_per_second": 877.5874403937962,
+                    "peak_memory_mb": 4534.457486979167,
+                    "total_time_sec": 21.69697472254435
+                }
+            }
+        }
+    }
+}
