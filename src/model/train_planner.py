@@ -7,16 +7,13 @@ import torch.nn.functional as F
 
 from tqdm import tqdm
 from transformers import set_seed
-import wandb
 
 from ..config.dataset_config import get_dataset_config
 from ..config.model_config import get_model_and_tokenizer
 from ..dataset.prepare_dataset_th import get_dataloaders as get_th_dataloaders
 from ..dataset.prepare_dataset_bw import get_dataloaders as get_bw_dataloaders
 from ..dataset.prepare_dataset_ts import get_dataloaders as get_ts_dataloaders
-from .utils import init_wandb
 
-# --- VICReg Math Helpers ---
 def off_diagonal(x):
     """Returns a flattened view of the off-diagonal elements of a square matrix"""
     n, m = x.shape
@@ -30,19 +27,13 @@ def vicreg_loss(pred_future, true_future, sim_coeff=25.0, std_coeff=25.0, cov_co
     Default coefficients (25, 25, 1) are standard from the original paper.
     """
     batch_size, hidden_dim = pred_future.shape
-
-    # 1. Invariance Loss (MSE)
     sim_loss = F.mse_loss(pred_future, true_future)
 
-    # 2. Variance Loss (Hinge loss on standard deviation)
-    # Adding epsilon (1e-04) for numerical stability in sqrt
     std_pred = torch.sqrt(pred_future.var(dim=0) + 1e-04)
     std_true = torch.sqrt(true_future.var(dim=0) + 1e-04)
     std_loss = torch.mean(F.relu(gamma - std_pred)) / 2 + \
                torch.mean(F.relu(gamma - std_true)) / 2
 
-    # 3. Covariance Loss
-    # Center the representations
     pred_future = pred_future - pred_future.mean(dim=0)
     true_future = true_future - true_future.mean(dim=0)
 
@@ -65,8 +56,7 @@ def save_checkpoint(model, step, save_dir):
     }, checkpoint_path)
     print(f"Checkpoint saved at {checkpoint_path}")
 
-# --- Training Loop ---
-def train(dataset_name="tinystories"):
+def train(dataset_name):
     # pylint: disable=too-many-locals,too-many-statements
     """Main training loop for the Latent Planner model."""
     torch.cuda.empty_cache()
@@ -76,64 +66,52 @@ def train(dataset_name="tinystories"):
 
     set_seed(42)
 
-    base_working_model = 'gpt2_512_512'
+    base_working_model = 'gpt2_512'
     ds_name = dataset_name
     stage = "planner"
-    model_map = {
-        "gpt2_hf": [2048, 768],
-        "gpt2_hf_1024": [1024, 768],
-        "gpt2_512_1024": [1024, 512],
-        "gpt2_512_512": [512, 512],
-        "hf_gpt2_512_512": [512, 512],
-    }
-    _, model = get_model_and_tokenizer(
-        working_model=base_working_model,
-        hidden_dim=model_map[base_working_model][1],
-        max_seq_length=model_map[base_working_model][0],
-        load_scratch=True,
-        dataset_name=ds_name,
-        load_stage=stage,
-        custom_ar=True,
-    )
-    model.to(device)
-    dataset_config = get_dataset_config(name=ds_name, stage=stage)
+
+    dataset_config = get_dataset_config(name=ds_name)
     train_path = dataset_config.get("train_path", "")
     print(f"Loading {ds_name} dataset from {train_path}...")
     validation_path = dataset_config.get("val_path", "")
     batch_size = dataset_config.get("batch_size", 16)
 
-    print("Preparing Datasets...")
-    learning_rate = 5e-5
-    num_epochs = 20
-    if ds_name == "blocksworld":
-        train_dataloader, eval_dataloader = get_bw_dataloaders(
+    if ds_name == "treasure_hunt":
+        dataloader_cls = get_th_dataloaders
+    elif ds_name == "blocksworld":
+        dataloader_cls = get_bw_dataloaders
+    else:
+        dataloader_cls = get_ts_dataloaders
+
+    if ds_name != "tinystories":
+        train_dataloader, eval_dataloader, _ = dataloader_cls(
             train_path=train_path,
             eval_path=validation_path,
             batch_size=batch_size,
-        )
-    elif ds_name == "treasure_hunt":
-        train_dataloader, eval_dataloader = get_th_dataloaders(
-            train_path=train_path,
-            eval_path=validation_path,
-            batch_size=batch_size,
+            tokenizer_path=dataset_config.get("tokenizer_path", ""),
         )
     else:
-        train_dataloader, eval_dataloader = get_ts_dataloaders(
+        train_dataloader, eval_dataloader, _ = dataloader_cls(
             dataset_name="skeskinen/TinyStories-Instruct-hf",
             batch_size=batch_size,
-            is_ddp=False,
             max_length=512,
         )
-    wandb_run_name= f"{stage}-{ds_name}-{base_working_model}"
-    init_wandb(
-        model_name=base_working_model,
-        stage=stage,
-        ds_name=ds_name,
-        learning_rate=learning_rate,
-        num_epochs=num_epochs,
-        ds_size=len(train_dataloader.dataset),
-        run_name=wandb_run_name,
+
+    _, model = get_model_and_tokenizer(
+        working_model=base_working_model,
+        max_seq_length=512,
+        load_scratch=True,
+        dataset_name=ds_name,
+        load_stage=stage,
+        custom_ar=True,
+        film=True,
+        vocab_size=dataset_config.get("vocab_size", 50257),
+        tokenizer_path=dataset_config.get("tokenizer_path", "")
     )
+    model.to(device)
+
+    learning_rate = 5e-5
+    num_epochs = 20
 
     outdir = f'./{ds_name}_{stage}_model_{base_working_model}'
     os.makedirs(outdir, exist_ok=True)
@@ -163,30 +141,20 @@ def train(dataset_name="tinystories"):
             pred_future, true_future, _ = model(prompt_ids, prompt_mask, future_ids=input_ids,
                                                 future_mask=attention_mask)
 
-            loss, sim, std, cov = vicreg_loss(pred_future, true_future)
+            loss, _, _, _ = vicreg_loss(pred_future, true_future)
             loss.backward()
             optimizer.step()
 
             epoch_loss += loss.item()
-            wandb.log({
-                "train/future_predict_loss": loss.item(),
-                "train/sim_loss": sim.item(),
-                "train/std_loss": std.item(),
-                "train/cov_loss": cov.item(),
-            }, step=global_step)
 
             if global_step % eval_steps == 0 and global_step > 0:
                 print(f"\nRunning Validation at Step {global_step}...")
-                avg_pos_sim, avg_neg_sim, avg_loss = run_validation(model, eval_dataloader, device)
+                _, _, avg_loss = run_validation(model, eval_dataloader, device)
+                print(f"Validation Loss at Step {global_step}: {avg_loss:.4f}")
                 model.train()
-                wandb.log({
-                    "val/positive_similarity": avg_pos_sim,
-                    "val/negative_similarity": avg_neg_sim,
-                    "val/loss": avg_loss,
-                }, step=global_step)
 
             progress_bar.set_postfix({
-                "ENC_loss": f"{loss.item():.3f}", 
+                "ENC_loss": f"{loss.item():.3f}"
             })
             global_step += 1
 
@@ -241,4 +209,4 @@ def run_validation(model, val_dataloader, device):
     return avg_pos, avg_neg, avg_loss
 
 if __name__ == "__main__":
-    train(dataset_name="tinystories")
+    train(dataset_name="treasure_hunt")
