@@ -61,14 +61,14 @@ python -m src.dataset.prepare_ds_goal_drop
 ```
 
 The generator modules use their settings in the source file rather than
-command-line arguments. For Blocksworld, train the WordLevel tokenizer
+command-line arguments. For Blocksworld, train the WordLevel tokeniser
 after generating the JSONL data:
 
 ```bash
 python -m src.dataset.train_bw_tokenizer
 ```
 
-This writes `src/config/tokenizer/bw6_tokenizer.json`, which is the tokenizer
+This writes `src/config/tokenizer/bw6_tokenizer.json`, which is the tokeniser
 configured for the Blocksworld variants.
 
 ## Model Stages
@@ -153,14 +153,15 @@ selected dataset, stage, and model size; custom paths can be passed through
 
 Blocksworld evaluation loads the configured writer and baseline checkpoints,
 simulates generated action sequences, and writes
-`bw_benchmarks/eval_results.json`:
+`bw_benchmarks/eval_results.json` and `bw_benchmarks/efficiency_results.json`:
 
 ```bash
-python -m src.evaluation.bw_eval_model
+python -m src.evaluation.eval_bw
+python -m src.evaluation.bw_efficiency
 ```
 
-It reports perfect-plan success, partial completion, and
-inference efficiency for different seeds and context windows 8, 16, 32, and 64.
+It reports perfect-plan success, partial completion.
+and inference efficiency for different seeds and context windows 8, 16, 32, and 64.
 
 Treasure Hunt evaluation compares retrieval and efficiency over several
 horizons, context windows, and seeds. It writes one result file per seed to
@@ -183,7 +184,7 @@ checkpoint.
 
 ## Configuration and Reproducibility
 
-Edit `src/config/dataset_config.py` to change data paths, tokenizer paths,
+Edit `src/config/dataset_config.py` to change data paths, tokeniser paths,
 vocabulary sizes, or batch sizes. Edit `src/config/model_config.py` to add or
 modify model dimensions and checkpoint resolution. Several training scripts 
 set seed `42`; Evaluations additionally run seeds `1337`, `2024`, `7777`, and `9999`.
@@ -196,4 +197,4 @@ names match the configured dataset/stage/model combination before evaluation.
 
 This repository contains research code for future-conditional language model
 experiments. Add the project citation or paper reference here when the
-associated publication details are finalized.
+associated publication details are finalised.
