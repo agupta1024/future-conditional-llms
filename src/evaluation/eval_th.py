@@ -238,7 +238,7 @@ def evaluate_horizon_memory(model_name, model, tokenizer, device,
         c_bin[f"context_{context_window}"] = h_bin
     return c_bin
 
-def main(): # pylint: disable=too-many-locals, too-many-statements
+def main(): # pylint: disable=too-many-locals, too-many-statements, too-many-branches
     """Main function to run the Treasure Hunt evaluation suite."""
     torch.cuda.empty_cache()
     gc.collect()
@@ -282,10 +282,17 @@ def main(): # pylint: disable=too-many-locals, too-many-statements
     baseline_model.eval()
     print_model_info(baseline_model, "Baseline Model")
 
+    model_config['load_stage'] = "base"
+    model_config['working_model'] = 'gpt2_512'
+    tokenizer, baseline_small = get_model_and_tokenizer(**model_config)
+    baseline_small.to(device)
+    baseline_small.eval()
+    print_model_info(baseline_small, "Baseline Small")
+
     horizons = [128, 256, 512, 1024]
     context_windows = [128, 256, 500]
 
-    model_names = ['Ours', 'Baseline']
+    model_names = ['Ours', 'Baseline', 'Baseline Small']
     aggregated_data = {
         "context_windows": context_windows,
         "horizons": horizons,
@@ -306,17 +313,20 @@ def main(): # pylint: disable=too-many-locals, too-many-statements
         for model_name in model_names:
             if model_name == "Ours":
                 model = ours_model
-            else:
+            elif model_name == "Baseline":
                 model = baseline_model
+            else:
+                model = baseline_small
             print(f"\n[!] Benchmarking '{model_name}' model with seed {seed}...")
 
             efficiency_metrics["models"][model_name] = evaluate_model_efficiency(model_name, model,
                                                                 device, val_dataloader,
                                                                 context_windows=context_windows)
-            aggregated_data["models"][model_name] = evaluate_horizon_memory(model_name, model,
-                                                        tokenizer, device, horizons=horizons,
-                                                        context_windows=context_windows,
-                                                        num_samples=100)
+            if model_name in ["Ours", "Baseline"]:
+                aggregated_data["models"][model_name] = evaluate_horizon_memory(model_name, model,
+                                                            tokenizer, device, horizons=horizons,
+                                                            context_windows=context_windows,
+                                                            num_samples=100)
 
         final_output = {
             "horizons": horizons,

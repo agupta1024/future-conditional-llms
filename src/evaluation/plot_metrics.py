@@ -45,6 +45,7 @@ def profile_model_efficiency(model_name, model, input_ids,
                 context_window=context_window,
                 eos_token_id=-1,
                 comma_id=comma_id,
+                use_cache=True,
             )
         else:
             _ = model.generate(
@@ -52,6 +53,7 @@ def profile_model_efficiency(model_name, model, input_ids,
                 max_new_tokens=max_new_tokens,
                 context_window=context_window,
                 eos_token_id=-1,
+                use_cache=True,
             )
 
     if torch.cuda.is_available():
@@ -249,16 +251,21 @@ def aggregate_th_results_across_seeds(filetag, metric_name, seeds, skip_horizon=
     return c_h_ours, c_h_baseline
 
 def calculate_efficiency(filetag, seeds):
-    # pylint: disable=too-many-branches, too-many-locals
+    # pylint: disable=too-many-branches, too-many-locals, too-many-statements
     """Calculate efficiency metrics for both ours and baseline models."""
     c_eff_ours = {}
     c_eff_baseline = {}
+    c_eff_baseline_small = {}
     metric_names = set()
+    contexts = set()
     for seed in seeds:
         filename_ours = f"{filetag}_{seed}.json"
         with open(filename_ours, "r", encoding="utf-8") as f:
             data_ours = json.load(f)
+            if "Ours" not in data_ours["models"]:
+                continue
             for c in data_ours["context_windows"]:
+                contexts.add(c)
                 c_eff_ours[(c)] = c_eff_ours.get((c), {})
                 ours_dict = data_ours["models"]["Ours"][f"context_{c}"]
                 efficiency_metrics = ours_dict["efficiency"]
@@ -271,13 +278,34 @@ def calculate_efficiency(filetag, seeds):
         filename_baseline = f"{filetag}_{seed}.json"
         with open(filename_baseline, "r", encoding="utf-8") as f:
             data_baseline = json.load(f)
+            if "Baseline" not in data_baseline["models"]:
+                continue
             for c in data_baseline["context_windows"]:
+                contexts.add(c)
                 c_eff_baseline[(c)] = c_eff_baseline.get((c), {})
                 baseline_dict = data_baseline["models"]["Baseline"][f"context_{c}"]
                 efficiency_metrics = baseline_dict["efficiency"]
                 for metric_name, val in efficiency_metrics.items():
                     c_eff_baseline[(c)][(metric_name)] = c_eff_baseline[(c)].get((metric_name), [])
                     c_eff_baseline[(c)][(metric_name)].append(val)
+                    metric_names.add(metric_name)
+
+    for seed in seeds:
+        filename_baseline = f"{filetag}_{seed}.json"
+        with open(filename_baseline, "r", encoding="utf-8") as f:
+            data_baseline = json.load(f)
+            if "Baseline Small" not in data_baseline["models"]:
+                continue
+            for c in data_baseline["context_windows"]:
+                contexts.add(c)
+                c_eff_baseline_small[(c)] = c_eff_baseline_small.get((c), {})
+                baseline_dict = data_baseline["models"]["Baseline Small"][f"context_{c}"]
+                efficiency_metrics = baseline_dict["efficiency"]
+                for metric_name, val in efficiency_metrics.items():
+                    old_val = c_eff_baseline_small[(c)].get((metric_name), [])
+                    c_eff_baseline_small[(c)][(metric_name)] = old_val
+                    c_eff_baseline_small[(c)][(metric_name)].append(val)
+                    metric_names.add(metric_name)
 
     for c in c_eff_ours:
         c_eff_ours[(c)] = {metric_name: [np.mean(values).item(), np.std(values, ddof=1).item()]
@@ -285,24 +313,27 @@ def calculate_efficiency(filetag, seeds):
     for c in c_eff_baseline:
         c_eff_baseline[(c)] = {metric_name: [np.mean(values).item(), np.std(values, ddof=1).item()]
                                for metric_name, values in c_eff_baseline[(c)].items()}
-
-    for c, data in c_eff_ours.items():
-        print(f"Context Window: {c}")
-        print("Ours Efficiency Metrics:")
-        for metric_name, (mean, std) in data.items():
-            print(f"  {metric_name}: Mean={mean:.4f}, Std={std:.4f}")
-        print("Baseline Efficiency Metrics:")
-        for metric_name, (mean, std) in c_eff_baseline[(c)].items():
-            print(f"  {metric_name}: Mean={mean:.4f}, Std={std:.4f}")
-        print("Percentage Change (Ours vs Baseline):")
+    for c in c_eff_baseline_small:
+        c_eff_baseline_small[(c)] = {metric_name: [np.mean(values).item(),
+                                                   np.std(values, ddof=1).item()]
+                                     for metric_name, values in c_eff_baseline_small[(c)].items()}
+    for c in contexts:
+        print("" + "="*80)
+        print(f"Efficiency Metrics at Context W={c}")
+        print(f"{'Metric':<18} | {'Ours':<19} | {'Baseline':<18} | \
+ {'Baseline Small':<18} | {'% Change (Ours vs Baseline)':<30}")
+        m_ours, std_ours, m_base, std_base, m_base_s, std_base_s = 0, 0, 0, 0, 0, 0
         for metric_name in metric_names:
-            mean_ours, _ = data[(metric_name)]
-            mean_base, _ = c_eff_baseline[(c)][(metric_name)]
-            if mean_base != 0:
-                pc_delta = (mean_ours - mean_base) * 100 / mean_base
-                print(f"  {metric_name}: Percentage Change: {pc_delta:.2f}%")
-            else:
-                print(f"  {metric_name}: Baseline mean is zero, cannot compute percentage change.")
+            if metric_name in c_eff_ours.get(c, {}):
+                m_ours, std_ours = c_eff_ours[c][metric_name]
+            if metric_name in c_eff_baseline.get(c, {}):
+                m_base, std_base = c_eff_baseline[c][metric_name]
+            if metric_name in c_eff_baseline_small.get(c, {}):
+                m_base_s, std_base_s = c_eff_baseline_small[c][metric_name]
+            pc_delta = (m_ours - m_base) * 100 / m_base
+            print(f"{metric_name:<18} | {m_ours:>8.2f} + {std_ours:>8.2f} |\
+{m_base:>8.2f} + {std_base:>8.2f} | {m_base_s:>8.2f} + {std_base_s:>8.2f} | {pc_delta:>18.2f}%")
+        print("" + "="*80)
 
     return c_eff_ours, c_eff_baseline
 
@@ -335,5 +366,5 @@ def treasure_hunt_metric_analysis(filetag, seeds,
 if __name__ == "__main__":
     treasure_hunt_metric_analysis(filetag="./th_benchmarks/eval_results",
                                   seeds=[42, 1337, 2024, 7777, 9999], horizon=[128, 1024])
-    # calculate_efficiency(filetag="./th_benchmarks/eval_results",
-    #                      seeds=[42, 1337, 2024, 7777, 9999])
+    calculate_efficiency(filetag="./th_benchmarks/efficiency_results",
+                         seeds=[42, 1337, 2024, 7777, 9999])
