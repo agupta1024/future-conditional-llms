@@ -1,56 +1,10 @@
 {
     "dynamic_model": {
-        "goal_success_rate": 98.0,
-        "legal_action_rate": 98.0,
-        "average_partial_completion": 99.2
+        "goal_success_rate": 97.2,
+        "average_partial_completion": 99.08
     },
     "baseline_model": {
         "goal_success_rate": 94.39999999999999,
-        "legal_action_rate": 95.19999999999999,
         "average_partial_completion": 98.0
-    },
-    "efficiency_metrics": {
-        "context_8": {
-            "tokens_per_second": 696.1919667980079,
-            "peak_memory_mb": 197.759814453125,
-            "total_time_sec": 0.7666139602661133
-        },
-        "context_16": {
-            "tokens_per_second": 696.1919667980079,
-            "peak_memory_mb": 197.759814453125,
-            "total_time_sec": 0.7666139602661133
-        },
-        "context_32": {
-            "tokens_per_second": 696.1919667980079,
-            "peak_memory_mb": 197.759814453125,
-            "total_time_sec": 0.7666139602661133
-        },
-        "context_64": {
-            "tokens_per_second": 696.1919667980079,
-            "peak_memory_mb": 197.759814453125,
-            "total_time_sec": 0.7666139602661133
-        }
-    },
-    "baseline_efficiency_metrics": {
-        "context_8": {
-            "tokens_per_second": 494.55163002313736,
-            "peak_memory_mb": 363.1259765625,
-            "total_time_sec": 1.035405421257019
-        },
-        "context_16": {
-            "tokens_per_second": 494.55163002313736,
-            "peak_memory_mb": 363.1259765625,
-            "total_time_sec": 1.035405421257019
-        },
-        "context_32": {
-            "tokens_per_second": 494.55163002313736,
-            "peak_memory_mb": 363.1259765625,
-            "total_time_sec": 1.035405421257019
-        },
-        "context_64": {
-            "tokens_per_second": 494.55163002313736,
-            "peak_memory_mb": 363.1259765625,
-            "total_time_sec": 1.035405421257019
-        }
     }
 }

@@ -144,7 +144,6 @@ def evaluate_dynamic_model(model, tokenizer, eval_data_path, is_dynamic=False,
 
     results = {
         "goal_success_rate": (total_success / num_samples) * 100 if num_samples > 0 else 0,
-        "legal_action_rate": (total_legal / num_samples) * 100 if num_samples > 0 else 0,
         "average_partial_completion": (total_partial / num_samples) if num_samples > 0 else 0
     }
     print(f"Goal Success Rate (Perfect Plan): {(total_success / num_samples) * 100:.1f}%")
@@ -171,8 +170,6 @@ def main():
         'vocab_size': dataset_config.get("vocab_size", 100),
         'tokenizer_path': dataset_config.get("tokenizer_path", ""),
     }
-    context_windows = [8, 16, 32, 64]
-
     model_config['working_model'] = 'gpt2_1024'
     model_config['load_stage'] = 'writer'
     tokenizer, dynamic_model = get_model_and_tokenizer(**model_config)
@@ -180,8 +177,6 @@ def main():
     dynamic_model.eval()
 
     print_model_info(dynamic_model, "Dynamic Model")
-    efficiency_metrics = evaluate_model_efficiency("Ours", dynamic_model, tokenizer,
-                                                device, eval_data_path, context_windows)
     results = evaluate_dynamic_model(dynamic_model, tokenizer, eval_data_path,
                            is_dynamic=True, num_samples=500, device=device)
 
@@ -191,15 +186,11 @@ def main():
     baseline.to(device)
     baseline.eval()
     print_model_info(baseline, "Baseline Model")
-    baseline_efficiency_metrics = evaluate_model_efficiency("Baseline", baseline, tokenizer,
-                                                        device, eval_data_path, context_windows)
     baseline_results = evaluate_dynamic_model(baseline, tokenizer, eval_data_path,
                                is_dynamic=False, num_samples=500, device=device)
     final_results = {
         "dynamic_model": results,
         "baseline_model": baseline_results,
-        "efficiency_metrics": efficiency_metrics,
-        "baseline_efficiency_metrics": baseline_efficiency_metrics
     }
     os.makedirs("./bw_benchmarks", exist_ok=True)
     with open("./bw_benchmarks/eval_results.json", "w", encoding="utf-8") as f:
