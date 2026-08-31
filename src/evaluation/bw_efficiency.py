@@ -1,16 +1,22 @@
 """ Blocksworld Model Evaluation Script"""
 
+import gc
 import os
 import re
 import json
+import random
 from collections import defaultdict
 import torch
+import numpy as np
 from transformers import set_seed
 
 from .plot_metrics import profile_model_efficiency
 from .blocksworld_simulator import BWSimulator
 from ..config.dataset_config import get_dataset_config
 from ..config.model_config import get_model_and_tokenizer
+
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
 
 def print_model_info(model, name="Model"):
     """Prints the number of parameters and architecture dimensions of the model."""
@@ -144,23 +150,23 @@ def evaluate_dynamic_model(model, tokenizer, eval_data_path, is_dynamic=False,
 
     results = {
         "goal_success_rate": (total_success / num_samples) * 100 if num_samples > 0 else 0,
-        "legal_action_rate": (total_legal / num_samples) * 100 if num_samples > 0 else 0,
         "average_partial_completion": (total_partial / num_samples) if num_samples > 0 else 0
     }
     print(f"Goal Success Rate (Perfect Plan): {(total_success / num_samples) * 100:.1f}%")
-    print(f"Legal Action Trajectories:        {(total_legal / num_samples) * 100:.1f}%")
     print(f"Average Partial Completion:       {total_partial / num_samples:.1f}%")
     return results
 
 def main():
     """ Main function to evaluate the dynamic model and baseline model on Blocksworld dataset."""
-    # pylint: disable=too-many-locals
+    # pylint: disable=too-many-locals, too-many-statements
+    torch.cuda.empty_cache()
+    gc.collect()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Loading environment on {device}...")
     set_seed(42)
 
     base_working_model = 'gpt2_1024'
-    ds_name = "blocksworld_lexical"
+    ds_name = "blocksworld"
     stage = "writer"
 
     dataset_config = get_dataset_config(name=ds_name)
@@ -183,10 +189,6 @@ def main():
     dynamic_model.to(device)
     dynamic_model.eval()
     print_model_info(dynamic_model, "Dynamic Model")
-    efficiency_metrics = evaluate_model_efficiency("Ours", dynamic_model, tokenizer,
-                                                device, eval_data_path, context_windows)
-    results = evaluate_dynamic_model(dynamic_model, tokenizer, eval_data_path,
-                           is_dynamic=True, num_samples=500, device=device)
 
     base_working_model = 'gpt2_1024-s'
     model_config['working_model'] = base_working_model
@@ -195,19 +197,56 @@ def main():
     baseline.to(device)
     baseline.eval()
     print_model_info(baseline, "Baseline Model")
-    baseline_efficiency_metrics = evaluate_model_efficiency("Baseline", baseline, tokenizer,
-                                                        device, eval_data_path, context_windows)
-    baseline_results = evaluate_dynamic_model(baseline, tokenizer, eval_data_path,
-                               is_dynamic=False, num_samples=500, device=device)
-    final_results = {
-        "dynamic_model": results,
-        "baseline_model": baseline_results,
-        "efficiency_metrics": efficiency_metrics,
-        "baseline_efficiency_metrics": baseline_efficiency_metrics
+
+    base_working_model = 'gpt2_1024'
+    model_config['working_model'] = base_working_model
+    model_config['load_stage'] = 'base'
+    _, baseline_small = get_model_and_tokenizer(**model_config)
+    baseline_small.to(device)
+    baseline_small.eval()
+    print_model_info(baseline_small, "Baseline Small Model")
+
+    default_seeds = [42, 1337, 2024, 7777, 9999]
+    agg_efficiency_metrics = {
+        "context_windows": context_windows,
+        "Max_tokens": 512,
+        "models": {model_name: defaultdict(lambda: defaultdict(list))
+                   for model_name in ["Ours", "Baseline", "Baseline Small"]}
     }
+    for seed in default_seeds:
+        set_seed(seed)
+        random.seed(seed)
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        np.random.seed(seed)
+        efficiency_metrics = evaluate_model_efficiency("Ours", dynamic_model, tokenizer,
+                                                        device, eval_data_path, context_windows)
+        baseline_efficiency_metrics = evaluate_model_efficiency("Baseline", baseline, tokenizer,
+                                                        device, eval_data_path, context_windows)
+        baseline_s_efficiency_metrics = evaluate_model_efficiency("Baseline Small", baseline_small,
+                                                                  tokenizer, device, eval_data_path,
+                                                                  context_windows)
+        for c in context_windows:
+            c_key = f"context_{c}"
+            for key, value in efficiency_metrics[c_key].items():
+                agg_efficiency_metrics["models"]["Ours"][c_key][key].append(value)
+            for key, value in baseline_efficiency_metrics[c_key].items():
+                agg_efficiency_metrics["models"]["Baseline"][c_key][key].append(value)
+            for key, value in baseline_s_efficiency_metrics[c_key].items():
+                agg_efficiency_metrics["models"]["Baseline Small"][c_key][key].append(value)
+
+    for c in context_windows:
+        context_key = f"context_{c}"
+        for model in ["Ours", "Baseline", "Baseline Small"]:
+            for key, values in agg_efficiency_metrics["models"][model][context_key].items():
+                values = np.array(values)
+                mean_val = float(np.mean(values))
+                std_val = float(np.std(values))
+                agg_efficiency_metrics["models"][model][context_key][key] = (mean_val, std_val)
+
     os.makedirs("./bw_benchmarks", exist_ok=True)
-    with open("./bw_benchmarks/eval_results.json", "w", encoding="utf-8") as f:
-        json.dump(final_results, f, indent=4)
+    with open("./bw_benchmarks/efficiency_results.json", "w", encoding="utf-8") as f:
+        json.dump(agg_efficiency_metrics, f, indent=4)
 
 
 if __name__ == "__main__":
