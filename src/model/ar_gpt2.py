@@ -39,10 +39,11 @@ class CausalSelfAttention(nn.Module):
             ),
         )
 
-    def forward(self, inputs):
+    def forward(self, inputs, kv_cache=None, context_window=None):
+        #pylint: disable=too-many-locals
         """Compute causal self-attention over the input sequence."""
         batch_size, seq_length, embed_dim = inputs.size()
-
+        past_seq_length = kv_cache[0].size(2) if kv_cache is not None else 0
         qkv = self.c_attn(inputs)
         query, key, value = qkv.split(self.n_embd, dim=2)
 
@@ -50,14 +51,27 @@ class CausalSelfAttention(nn.Module):
         query = query.view(batch_size,seq_length,self.n_head,embed_dim //self.n_head).transpose(1,2)
         value = value.view(batch_size,seq_length,self.n_head,embed_dim //self.n_head).transpose(1,2)
 
+        if kv_cache is not None:
+            past_k, past_v = kv_cache
+            key = torch.cat([past_k, key], dim=2)
+            value = torch.cat([past_v, value], dim=2)
+
+        if context_window is not None and key.size(2) > context_window:
+            key = key[:, :, -context_window:, :]
+            value = value[:, :, -context_window:, :]
+
+        total_seq_length = key.size(2)
+        new_kv_cache = (key, value)
+
         attention = (query @ key.transpose(-2, -1)) * (1.0 / math.sqrt(key.size(-1)))
-        attention = attention.masked_fill(self.bias[:,:,:seq_length,:seq_length]== 0, float("-inf"))
+        mask = self.bias[:, :, past_seq_length:past_seq_length+seq_length, :total_seq_length]
+        attention = attention.masked_fill(mask == 0, float("-inf"))
         attention = F.softmax(attention, dim=-1)
 
         attended = attention @ value
         attended = attended.transpose(1, 2).contiguous().view(batch_size, seq_length, embed_dim)
         attended = self.c_proj(attended)
-        return attended
+        return attended, new_kv_cache
 
 
 class MLP(nn.Module):
@@ -87,11 +101,14 @@ class Block(nn.Module):
         self.ln_2 = nn.LayerNorm(config_.n_embd)
         self.mlp = MLP(config_)
 
-    def forward(self, inputs):
+
+    def forward(self, inputs, kv_cache=None, context_window=None):
         """Run a residual block over the input sequence."""
-        x = inputs + self.attn(self.ln_1(inputs))
+        attn_output, new_kv_cache = self.attn(self.ln_1(inputs), kv_cache=kv_cache,
+                                              context_window=context_window)
+        x = inputs + attn_output
         x = x + self.mlp(self.ln_2(x))
-        return x
+        return x, new_kv_cache
 
 
 class GPT2Baseline(nn.Module):
@@ -110,24 +127,33 @@ class GPT2Baseline(nn.Module):
         self.lm_head = nn.Linear(config_.n_embd, config_.vocab_size, bias=False)
         self.token_embedding.weight = self.lm_head.weight
 
-    def forward(self, input_ids, return_hidden_states=False, **_kwargs):
+    def forward(self, input_ids, return_hidden_states=False, use_cache=False,
+                kv_caches=None, context_window=None, **_kwargs):
+        #pylint: disable=too-many-locals
         """Run the baseline model over the provided token ids."""
         device = input_ids.device
         _, seq_length = input_ids.size()
 
-        positions = torch.arange(0, seq_length, dtype=torch.long, device=device)
+        past_seq_length = kv_caches[0][0].size(2) if kv_caches is not None else 0
+        positions = torch.arange(past_seq_length, past_seq_length + seq_length,
+                                 dtype=torch.long, device=device)
 
         token_embeddings = self.token_embedding(input_ids)
         position_embeddings = self.position_embedding(positions)
         x = token_embeddings + position_embeddings
-
-        for layer in self.layers:
-            x = layer(x)
+        new_kv_caches = [] if use_cache else None
+        for i, layer in enumerate(self.layers):
+            layer_cache = kv_caches[i] if kv_caches is not None else None
+            x, new_layer_cache = layer(x, kv_cache=layer_cache, context_window=context_window)
+            if use_cache:
+                new_kv_caches.append(new_layer_cache)
 
         x = self.ln_final(x)
-        if return_hidden_states:
-            return x
-        return self.lm_head(x)
+        out = x if return_hidden_states else self.lm_head(x)
+
+        if use_cache:
+            return out, new_kv_caches
+        return out
 
     @torch.no_grad()
     def generate(self, input_ids, max_new_tokens=50, **_kwargs):
@@ -144,9 +170,17 @@ class GPT2Baseline(nn.Module):
         pad_token_id = _kwargs.get('pad_token_id', None)
         fill_pad_id = (pad_token_id if pad_token_id is not None
                         else (eos_token_id if eos_token_id is not None else 0))
+        kv_caches = None
+        current_input_ids = input_ids[:, -context_window:]
         for _ in range(max_new_tokens):
-            context_ids = generated_ids[:, -context_window:]
-            outputs = self(context_ids, use_cache=False)
+            if current_input_ids.size(1) > self.config.n_positions:
+                break
+
+            outputs, kv_caches = self(current_input_ids,
+                                      use_cache=True,
+                                      kv_caches=kv_caches,
+                                      context_window=context_window,
+                                      )
 
             if hasattr(outputs, 'logits'):
                 logits = outputs.logits
@@ -177,6 +211,7 @@ class GPT2Baseline(nn.Module):
                 next_token = next_token_flat.unsqueeze(-1)
 
             generated_ids = torch.cat((generated_ids, next_token), dim=1)
+            current_input_ids = next_token
             if eos_token_id is not None and not unfinished_sequences.any():
                 break
 

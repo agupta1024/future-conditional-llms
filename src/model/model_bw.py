@@ -82,11 +82,19 @@ class LatentPlanner(nn.Module):
 
         self.updater = CrossAttentionPlanUpdater(hidden_dim=latent_dim)
 
-    def get_initial_plan(self, prompt_ids, prompt_mask=None):
+    def get_initial_plan(self, prompt_ids, prompt_mask=None, use_cache=False,
+                         context_window=1024):
         """
         Computes the initial latent plan (P_0) from the prompt.
         """
-        hidden_states = self.encoder(prompt_ids, return_hidden_states=True)
+        if use_cache:
+            hidden_states, kv_caches = self.encoder(
+                prompt_ids, return_hidden_states=True, use_cache=True,
+                context_window=context_window
+            )
+        else:
+            hidden_states = self.encoder(prompt_ids, return_hidden_states=True)
+            kv_caches = None
 
         if prompt_mask is not None:
             sequence_lengths = prompt_mask.sum(dim=1) - 1
@@ -95,7 +103,9 @@ class LatentPlanner(nn.Module):
         else:
             last_token_hidden = hidden_states[:, -1, :]
 
-        p_0 = self.init_projector(last_token_hidden).unsqueeze(1) # [Batch, 1, Dim]
+        p_0 = self.init_projector(last_token_hidden).unsqueeze(1)
+        if use_cache:
+            return p_0, kv_caches
         return p_0
 
     def step_plan(self, action_embedding, p_curr):
@@ -143,13 +153,18 @@ class LatentDecoderBlock(nn.Module):
         self.ln_2 = nn.LayerNorm(config.n_embd)
         self.mlp = MLP(config)
 
-    def forward(self, x, latent_plan, film_mask=None):
+    def forward(self, x, latent_plan, film_mask=None, kv_cache=None, context_window=1024):
         """
         x: The current sequence of embeddings. Shape: [Batch, T, Dim]
         latent_plan: The static latent plan vector. Shape: [Batch, 1, Dim]
         film_mask: Optional mask to control which tokens receive FiLM modulation. Shape: [Batch, T]
         """
-        x = x + self.attn(self.ln_1(x))
+        attn_out, new_kv_cache = self.attn(
+            self.ln_1(x),
+            kv_cache=kv_cache,
+            context_window=context_window
+        )
+        x = x + attn_out
 
         scale = self.film_scale(latent_plan)
         shift = self.film_shift(latent_plan)
@@ -166,7 +181,7 @@ class LatentDecoderBlock(nn.Module):
         x_modulated = (self.ln_2(x) * (1.0 + scale)) + shift
         x = x + self.mlp(x_modulated)
 
-        return x
+        return x, new_kv_cache
 
 class LatentWriter(nn.Module):
     # pylint: disable=too-many-instance-attributes
@@ -196,8 +211,10 @@ class LatentWriter(nn.Module):
 
     def forward(self, input_ids, prompt_ids=None,
                 prompt_mask=None, latent_plan=None,
-                film_mask=None, position_ids=None):
-        # pylint: disable=too-many-arguments, too-many-positional-arguments
+                film_mask=None, position_ids=None,
+                kv_caches=None, use_cache=False,
+                context_window=1024, **_kwargs):
+        # pylint: disable=too-many-arguments, too-many-positional-arguments, too-many-locals
         """Computes the logits for the next token predictions given the input sequence."""
         device = input_ids.device
         b, t = input_ids.size()
@@ -207,50 +224,79 @@ class LatentWriter(nn.Module):
             latent_plan = self.planner(prompt_ids, prompt_mask)
 
         if position_ids is None:
-            position_ids = torch.arange(0, t, dtype=torch.long,
+            past_seq_len = kv_caches[0][0].size(2) if kv_caches is not None else 0
+            position_ids = torch.arange(past_seq_len, past_seq_len + t, dtype=torch.long,
                                         device=device).unsqueeze(0).expand(b, t)
 
         x = self.token_embedding(input_ids) + self.position_embedding(position_ids)
-
-        for layer in self.layers:
-            x = layer(x, latent_plan, film_mask=film_mask)
+        new_kv_caches = [] if use_cache else None
+        for i, layer in enumerate(self.layers):
+            layer_cache = kv_caches[i] if kv_caches is not None else None
+            x, new_layer_cache = layer(
+                x,
+                latent_plan,
+                film_mask=film_mask,
+                kv_cache=layer_cache,
+                context_window=context_window
+            )
+            if use_cache:
+                new_kv_caches.append(new_layer_cache)
 
         x = self.ln_final(x)
         logits = self.lm_head(x)
 
+        if use_cache:
+            return logits, new_kv_caches
         return logits
 
     @torch.no_grad()
     def generate(self, input_ids, comma_id, eos_token_id,
                  latent_plan=None, context_window=1024,
-                 max_new_tokens=50, temperature=0.0):
+                 max_new_tokens=50, temperature=0.0,
+                 **_kwargs):
         # pylint: disable=too-many-arguments, too-many-positional-arguments, too-many-locals
         """
         Standalone greedy generator to make testing the final model effortless.
         """
         self.eval()
         generated_ids = input_ids.clone()
-        prompt_len = input_ids.size(1)
 
         prompt_mask = torch.ones_like(input_ids)
 
         if latent_plan is None:
-            p_curr = self.planner.get_initial_plan(input_ids, prompt_mask)
+            p_curr, planner_kv_caches = self.planner.get_initial_plan(
+                input_ids, prompt_mask, use_cache=True, context_window=context_window
+            )
         else:
             p_curr = latent_plan
-        plan_history = p_curr.expand(-1, prompt_len, -1).clone()
+            _, planner_kv_caches = self.planner.encoder(
+                input_ids, use_cache=True, context_window=context_window
+            )
+        # plan_history = p_curr.expand(-1, prompt_len, -1).clone()
+
+        writer_kv_caches = None
+        current_input_ids = input_ids[:, -context_window:]
+        prompt_len = current_input_ids.size(1)
+        current_plan = p_curr.expand(-1, prompt_len, -1)
+        current_film_mask = (torch.arange(prompt_len, device=input_ids.device) >=
+                             prompt_len - 1).float().unsqueeze(0).expand(generated_ids.size(0), -1)
+
+        encoder_unprocessed_tokens = []
         for _ in range(max_new_tokens):
-            seq_len = generated_ids.size(1)
+            seq_len = current_input_ids.size(1)
             if seq_len >= self.config.n_positions:
                 break
-            film_mask = (torch.arange(seq_len,
-                                      device=input_ids.device
-                                      ) >= prompt_len-1).float().unsqueeze(0).expand(
-                                          generated_ids.size(0), -1)
-            logits = self(
-                input_ids=generated_ids[:, -context_window:],
-                latent_plan=plan_history[:, -context_window:],
-                film_mask=film_mask[:, -context_window:]
+            # film_mask = (torch.arange(seq_len,
+            #                           device=input_ids.device
+            #                           ) >= prompt_len-1).float().unsqueeze(0).expand(
+            #                               generated_ids.size(0), -1)
+            logits, writer_kv_caches = self(
+                input_ids=current_input_ids,
+                latent_plan=current_plan,
+                film_mask=current_film_mask,
+                kv_caches=writer_kv_caches,
+                use_cache=True,
+                context_window=context_window
             )
             next_token_logits = logits[:, -1, :]
             if temperature == 0.0:
@@ -261,11 +307,25 @@ class LatentWriter(nn.Module):
                 next_token = torch.multinomial(probs, num_samples=1)
             token_val = next_token.item()
             generated_ids = torch.cat((generated_ids, next_token), dim=1)
+
+            encoder_unprocessed_tokens.append(next_token)
             if token_val == comma_id:
-                encoder_outputs = self.planner.encoder(generated_ids, return_hidden_states=True)
+                chunk_ids = torch.cat(encoder_unprocessed_tokens, dim=1)
+                encoder_outputs, planner_kv_caches = self.planner.encoder(
+                    chunk_ids,
+                    return_hidden_states=True,
+                    use_cache=True,
+                    kv_caches=planner_kv_caches,
+                    context_window=context_window
+                )
                 act_emb = encoder_outputs[:, -1, :]
                 p_curr = self.planner.step_plan(act_emb, p_curr)
-            plan_history = torch.cat((plan_history, p_curr), dim=1)
+                encoder_unprocessed_tokens.clear()
+
+            # # plan_history = torch.cat((plan_history, p_curr), dim=1)
             if token_val == eos_token_id:
                 break
+            current_input_ids = next_token
+            current_plan = p_curr
+            current_film_mask = torch.ones((generated_ids.size(0), 1), device=input_ids.device)
         return generated_ids

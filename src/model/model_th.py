@@ -126,17 +126,26 @@ class LatentDecoderBlock(nn.Module): # pylint: disable=too-many-instance-attribu
         )
         self.ln3 = nn.LayerNorm(hidden_dim)
 
-    def forward(self, x, latent_plan, causal_mask):
+    def forward(self, x, latent_plan, causal_mask, kv_cache=None, context_window=512):
         """
         x: The text generated so far (Batch, Seq_Len, Dim)
         latent_plan: The predicted future from the Planner (Batch, 1, Dim)
         causal_mask: Prevents looking at future tokens
         """
+        norm_x = self.ln1(x)
+        if kv_cache is not None:
+            full_x = torch.cat([kv_cache, norm_x], dim=1)
+        else:
+            full_x = norm_x
+        if context_window is not None and full_x.size(1) > context_window:
+            full_x = full_x[:, -context_window:, :]
+        new_kv_cache = full_x
+        active_mask = causal_mask if x.size(1) > 1 else None
         attn_out, _ = self.self_attn(
-            query=self.ln1(x),
-            key=self.ln1(x),
-            value=self.ln1(x),
-            attn_mask=causal_mask,
+            query=norm_x,
+            key=full_x,
+            value=full_x,
+            attn_mask=active_mask,
             need_weights=False,
         )
         x = x + attn_out
@@ -149,7 +158,7 @@ class LatentDecoderBlock(nn.Module): # pylint: disable=too-many-instance-attribu
 
         x_modulated = (self.ln3(x) * (1.0 + scale)) + shift
         x = x + self.mlp(x_modulated)
-        return x
+        return x, new_kv_cache
 
 
 class LatentWriter(nn.Module):
@@ -195,7 +204,9 @@ class LatentWriter(nn.Module):
 
     def forward(self, input_ids, latent_plan=None,
                 prompt_ids=None, prompt_mask=None,
-                return_hidden_states=False):
+                position_ids=None, kv_caches=None, use_cache=False,
+                context_window=512, return_hidden_states=False):
+        #pylint: disable=too-many-locals
         """
         input_ids: (Batch, Seq_Len)
         latent_plan: (Batch, Dim) -> We will unsqueeze it to (Batch, 1, Dim)
@@ -207,17 +218,31 @@ class LatentWriter(nn.Module):
             assert prompt_ids is not None, "Must provide prompt_ids if latent_plan is None!"
             latent_plan, _, _ = self.planner(prompt_ids, prompt_mask)
 
-        positions = torch.arange(0, seq_len, dtype=torch.long, device=device).unsqueeze(0)
-        x = self.token_embedding(input_ids) + self.position_embedding(positions)
-
+        if position_ids is None:
+            past_seq_len = kv_caches[0].size(1) if kv_caches is not None else 0
+            position_ids = torch.arange(past_seq_len, past_seq_len + seq_len, dtype=torch.long,
+                                        device=device).unsqueeze(0).expand(_batch_size, seq_len)
+        x = self.token_embedding(input_ids) + self.position_embedding(position_ids)
+        new_kv_caches = [] if use_cache else None
         causal_mask = self.generate_causal_mask(seq_len, device)
-        for layer in self.layers:
-            x = layer(x, latent_plan, causal_mask)
+        for i, layer in enumerate(self.layers):
+            layer_cache = kv_caches[i] if kv_caches is not None else None
+            x, new_layer_cache = layer(
+                x,
+                latent_plan,
+                causal_mask,
+                kv_cache=layer_cache,
+                context_window=context_window
+            )
+            if use_cache:
+                new_kv_caches.append(new_layer_cache)
 
         x = self.ln_final(x)
+        logits = self.lm_head(x)
         if return_hidden_states:
             return x
-        logits = self.lm_head(x)
+        if use_cache:
+            return logits, new_kv_caches
         return logits
 
     @torch.no_grad()
@@ -236,13 +261,23 @@ class LatentWriter(nn.Module):
                                           device=input_ids.device)
         if latent_plan is None:
             latent_plan = self.planner.get_initial_plan(input_ids, prompt_mask)
+
         fill_pad_id = (pad_token_id if pad_token_id is not None
                        else (eos_token_id if eos_token_id is not None else 0))
+
+        writer_kv_caches = None
+        current_input_ids = input_ids[:, -context_window:]
         for _ in range(max_new_tokens):
-            context_ids = generated_ids[:, -context_window:]
-            logits = self(
-                input_ids=context_ids,
+            seq_len = current_input_ids.size(1)
+            if seq_len >= self.config.n_positions:
+                break
+
+            logits, writer_kv_caches = self(
+                input_ids=current_input_ids,
                 latent_plan=latent_plan,
+                kv_caches=writer_kv_caches,
+                use_cache=True,
+                context_window=context_window
             )
             next_token_logits = logits[:, -1, :]
             if temperature == 0.0:
@@ -265,4 +300,5 @@ class LatentWriter(nn.Module):
             generated_ids = torch.cat((generated_ids, next_token), dim=1)
             if eos_token_id is not None and not unfinished_sequences.any():
                 break
+            current_input_ids = next_token
         return generated_ids
