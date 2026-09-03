@@ -125,13 +125,13 @@ For Treasure Hunt, use the DDP-enabled writer trainer. It
 expects multiple CUDA processes and defaults to Treasure Hunt:
 
 ```bash
-torchrun --standalone --nproc_per_node=2 -m src.model.train_th_writer
+torchrun --nproc-per-node=2 -m src.model.train_th_writer
 ```
 
 For Blocksworld, use the end-to-end continuous-plan trainer instead:
 
 ```bash
-python -m src.model.train_bw_writer
+torchrun --nproc-per-node=2 -m src.model.train_bw_writer
 ```
 
 The Blocksworld trainer accepts an optional `objective="_goal_drop"` in its
@@ -139,7 +139,7 @@ source-level call and writes to a matching `_goal_drop` directory. The
 alternative `train_bw_static_writer.py` trains a static plan variant:
 
 ```bash
-python -m src.model.train_bw_static_writer
+torchrun --nproc-per-node=2 -m src.model.train_bw_static_writer
 ```
 
 Typical output directories include
