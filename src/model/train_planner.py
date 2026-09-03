@@ -84,14 +84,14 @@ def train(dataset_name):
         dataloader_cls = get_ts_dataloaders
 
     if ds_name != "tinystories":
-        train_dataloader, eval_dataloader, _ = dataloader_cls(
+        train_dataloader, eval_dataloader, _, _ = dataloader_cls(
             train_path=train_path,
             eval_path=validation_path,
             batch_size=batch_size,
             tokenizer_path=dataset_config.get("tokenizer_path", ""),
         )
     else:
-        train_dataloader, eval_dataloader, _ = dataloader_cls(
+        train_dataloader, eval_dataloader, _, _ = dataloader_cls(
             dataset_name="skeskinen/TinyStories-Instruct-hf",
             batch_size=batch_size,
             max_length=512,
