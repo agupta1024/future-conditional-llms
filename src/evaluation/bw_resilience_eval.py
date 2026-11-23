@@ -36,6 +36,7 @@ def run_k_perturbation_benchmark():
 
     model_config['working_model'] = 'gpt2_1024'
     model_config['load_stage'] = 'writer'
+    # model_config['writer_model_path'] = "./blocksworld_writer_model_gpt2_1024_EGGROLL/writer_model.pt"
     tokenizer, dynamic_model = get_model_and_tokenizer(**model_config)
     dynamic_model.to(device)
     dynamic_model.eval()

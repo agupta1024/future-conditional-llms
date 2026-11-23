@@ -4,6 +4,7 @@ import os
 import json
 
 import torch
+from torch.utils.data import Subset
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.data.distributed import DistributedSampler
 from transformers import PreTrainedTokenizerFast
@@ -75,9 +76,10 @@ class BlocksworldCollator:
     # pylint: disable=too-few-public-methods
     """Pad prompt and trajectory tensors for batching."""
 
-    def __init__(self, pad_token_id):
+    def __init__(self, pad_token_id, padding="right"):
         self.pad_token_id = pad_token_id
         self.ignore_index = -100
+        self.padding_side = padding
 
     def __call__(self, features):
         # pylint: disable=too-many-locals
@@ -103,12 +105,20 @@ class BlocksworldCollator:
 
         for i, f in enumerate(features):
             length = prompt_lengths[i]
-            batch_prompt_ids[i, :length] = f["prompt_ids"]
-            batch_prompt_mask[i, :length] = 1
+            if self.padding_side == "right":
+                batch_prompt_ids[i, :length] = f["prompt_ids"]
+                batch_prompt_mask[i, :length] = 1
+            else:
+                batch_prompt_ids[i, -length:] = f["prompt_ids"]
+                batch_prompt_mask[i, -length:] = 1
 
             g_length = goal_lengths[i]
-            batch_goal_ids[i, :g_length] = f["pure_goal_ids"]
-            batch_goal_mask[i, :g_length] = 1
+            if self.padding_side == "right":
+                batch_goal_ids[i, :g_length] = f["pure_goal_ids"]
+                batch_goal_mask[i, :g_length] = 1
+            else:
+                batch_goal_ids[i, -g_length:] = f["pure_goal_ids"]
+                batch_goal_mask[i, -g_length:] = 1
 
         input_lengths = [f["input_ids"].size(0) for f in features]
         max_input_len = max(input_lengths)
@@ -129,11 +139,18 @@ class BlocksworldCollator:
 
         for i, f in enumerate(features):
             length = input_lengths[i]
-            batch_input_ids[i, :length] = f["input_ids"]
-            batch_input_mask[i, :length] = 1
-            batch_labels[i, :length] = f["labels"]
-            batch_loss_weights[i, :length] = f["loss_weights"]
-            batch_update_mask[i, :length] = f["update_mask"]
+            if self.padding_side == "right":
+                batch_input_ids[i, :length] = f["input_ids"]
+                batch_input_mask[i, :length] = 1
+                batch_labels[i, :length] = f["labels"]
+                batch_loss_weights[i, :length] = f["loss_weights"]
+                batch_update_mask[i, :length] = f["update_mask"]
+            else:
+                batch_input_ids[i, -length:] = f["input_ids"]
+                batch_input_mask[i, -length:] = 1
+                batch_labels[i, -length:] = f["labels"]
+                batch_loss_weights[i, -length:] = f["loss_weights"]
+                batch_update_mask[i, -length:] = f["update_mask"]
 
         return {
             "prompt_ids": batch_prompt_ids,
@@ -147,7 +164,24 @@ class BlocksworldCollator:
             "update_mask": batch_update_mask
         }
 
-def get_dataloaders(train_path, eval_path, tokenizer_path,
+# --- CLEAN COLLATOR FOR PURE INFERENCE ---
+def inference_collator(batch, tokenizer):
+    """Simple left-padding collator for pure inference. No masks or labels needed."""
+    prompts = [item['prompt'] for item in batch]
+    goals = [item['goal'] for item in batch]
+    
+    # Left-pad so the causal decoder aligns perfectly
+    tokenizer.padding_side = 'left'
+    
+    inputs = tokenizer(
+        [f"[INIT] {p} [GOAL] {g}" for p, g in zip(prompts, goals)],
+        return_tensors="pt",
+        padding=True,
+        truncation=True
+    )
+    return inputs.input_ids, inputs.attention_mask
+
+def get_dataloaders(train_path, eval_path, tokenizer_path, padding="right",
                     is_ddp=False, batch_size=8, max_length=512):
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     """Return DataLoaders for training and evaluation datasets."""
@@ -171,7 +205,7 @@ def get_dataloaders(train_path, eval_path, tokenizer_path,
     if eval_path and os.path.exists(eval_path):
         eval_dataset = BlocksworldDataset(eval_path, tokenizer, max_length=max_length)
 
-    collator = BlocksworldCollator(pad_token_id=tokenizer.pad_token_id)
+    collator = BlocksworldCollator(pad_token_id=tokenizer.pad_token_id, padding=padding)
     if is_ddp:
         train_sampler = None
         eval_sampler = None
@@ -183,11 +217,12 @@ def get_dataloaders(train_path, eval_path, tokenizer_path,
     else:
         train_sampler = None
         eval_sampler = None
-        shuffle = True
+        shuffle = False
 
     if train_dataset is not None:
+        train_subset = Subset(train_dataset, range(5000))
         train_loader = DataLoader(
-            train_dataset,
+            train_subset,
             batch_size=batch_size,
             shuffle=shuffle,
             sampler=train_sampler,

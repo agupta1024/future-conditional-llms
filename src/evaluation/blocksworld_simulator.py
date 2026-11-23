@@ -72,7 +72,7 @@ class BWSimulator:
 
     def score_goal(self, goal_str):
         """Check if the current state satisfies the goal conditions."""
-        goal_conds = set(goal_str.strip().split(", "))
+        goal_conds = {cond.strip() for cond in goal_str.split(",") if cond.strip()}
         satisfied = len(goal_conds.intersection(self.state))
 
         return {
